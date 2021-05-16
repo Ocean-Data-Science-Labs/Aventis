@@ -2326,9 +2326,9 @@ if __name__ == '__main__':
                                       "/Aventis Out - ",
                                       options["ID"], 
                                       " Starting: ",
-                                      str(options["Input Date"]),
+                                      str(options["Input Date"]).replace(":","."),
                                       " - ",
-                                      str(datetime.datetime.now())[0:10],
+                                      str(datetime.datetime.now())[0:10].replace(":","."),
                                      ".pickle"])
 
 
@@ -2402,6 +2402,7 @@ if __name__ == '__main__':
                 f_plot_start_date_sensitivty_plume(df_summary, split_dict)
 
 
+
             if options["Save Files"] == "Yes":
                 out_d = {}
                 out_d["DF Summary"] = df_summary
@@ -2411,8 +2412,8 @@ if __name__ == '__main__':
                                   "/Aventis Out - ",
                                   options["ID"], 
                                   " SDS - ",
-                                  str(datetime.datetime.now())[0:10],
-                                 ".pickle"])
+                                  str(datetime.datetime.now())[0:10].replace(":","."),
+                                 ".pickle"])   #thank you OM
 
 
                 with open(out_id, 'wb') as f:
