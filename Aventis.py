@@ -2146,9 +2146,9 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     for i in range(0,len(percentiles_with_p0)):
 
         if i == 0:
-            df_for_csv[start_column_names[i]] = pd.to_timedelta(wbs["Net Duration [hrs]"].cumsum(), unit='h') - pd.to_timedelta(wbs["Net Duration [hrs]"].iloc[0], unit='h') + d_start_dates[list(d_start_dates.keys())[0]][0]
+            df_for_csv[start_column_names[i]] = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h') - pd.to_timedelta(wbs["Net Duration [hrs]"].iloc[0], unit='h') + d_start_dates[list(d_start_dates.keys())[0]][0]
             
-            df_summary[summary_column_names[i]].loc[0] = np.round(wbs["Net Duration [hrs]"].sum()/24,1)
+            df_summary[summary_column_names[i]].loc[0] = np.round(wbs["Duration [timesteps]"].sum()/24*timestep,1)
 
         else:
             df_for_csv[start_column_names[i]] = p_start_dates[i-1,:] 
@@ -2159,7 +2159,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     for i in range(0,len(percentiles_with_p0)):
         
         if i == 0:
-                df_for_csv[end_column_names[i]] = pd.to_timedelta(wbs["Net Duration [hrs]"].cumsum(), unit='h') + d_start_dates[list(d_start_dates.keys())[0]][0]
+                df_for_csv[end_column_names[i]] = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h') + d_start_dates[list(d_start_dates.keys())[0]][0]
         
         else:
             df_for_csv[end_column_names[i]] = p_end_dates[i-1,:] 
