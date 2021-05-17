@@ -2166,7 +2166,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     
     out_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                       "/Output - ",
-                      ID,
+                      options["ID"],
                       ".xlsx" ])
 
     
@@ -2448,7 +2448,9 @@ if __name__ == '__main__':
         if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
 
             if options["Linked Simulation (Yes/ No)"] == "yes" or options["Linked Simulation (Yes/ No)"] == "Yes" or options["Linked Simulation (Yes/ No)"] == "Y":
-                
+                #So what are we doing here? well... we are finding the dates of each of the linked activities in the previous simulation.
+                #This will be cross referenced against locations and reordered (in a later release). Still undecided if we should be able to 
+                #change the previous sequence in the input files or not!  
                 linked_sim_output = pickle.load(open(options["Previous Simulation or Set Dates"], "rb"))
                 linked_end_dates = linked_sim_output[0]["End Dates Unchanged"]
                 linked_wbs = linked_sim_output[0]["WBS"]
@@ -2475,7 +2477,6 @@ if __name__ == '__main__':
 
             toc = time.time()
             print("Complete in", toc - tic, "s")
-
 
 
             if options["Export Stats"] == "Yes":
@@ -2543,8 +2544,34 @@ if __name__ == '__main__':
             df_summary = pd.DataFrame(index=[start_dates])
             summary_column_names = ["P%d" % (i) for i in percentiles_to_find] 
 
+
+            # do we want to do this for every simulation? Depends on the linked sim, if it is single start date then no, if it is SDS then yes. Code that in future!
+            if options["Linked Simulation (Yes/ No)"] == "yes" or options["Linked Simulation (Yes/ No)"] == "Yes" or options["Linked Simulation (Yes/ No)"] == "Y":
+                #So what are we doing here? well... we are finding the dates of each of the linked activities in the previous simulation.
+                #This will be cross referenced against locations and reordered (in a later release). Still undecided if we should be able to 
+                #change the previous sequence in the input files or not!  
+
+                linked_sim_output = pickle.load(open(options["Previous Simulation or Set Dates"], "rb"))
+                linked_end_dates = linked_sim_output[0]["End Dates Unchanged"]
+                linked_wbs = linked_sim_output[0]["WBS"]
+                linked_activity = options["Linked Activity (Previous Simulation)"]
+                linked_activity_inds = list(linked_wbs[linked_wbs["Activity"] == linked_activity].index)
+                linked_activity_dates = {}
+                linked_activity_locations = linked_wbs["Location"].iloc[linked_activity_inds]
+
+                for key in linked_end_dates.keys():
+                    linked_activity_dates[key] = linked_end_dates[key][linked_activity_inds]
+                    
+            else:
+                #initialise because they're expected in later functions, but will not be used
+                linked_activity_dates = list()
+                linked_activity_locations = list()
+
+
             for col_name in summary_column_names:
                 df_summary[col_name] = "DNF"
+
+            d_end_dates_unchanged_all = {}
 
             for start_date in start_dates:
                 print("Starting: ", str(start_date))
@@ -2561,6 +2588,8 @@ if __name__ == '__main__':
                 #d_start_dates_dict[str(start_date)] = d_start_dates
                 #d_end_dates_dict[str(start_date)] = d_end_dates
 
+                #d_end_dates_unchanged_all[start_date] = d_end_dates_unchanged
+
                 if options["Export Stats"] == "Yes":
 
 
@@ -2575,10 +2604,13 @@ if __name__ == '__main__':
 
 
 
+            out_ID = "".join([os.path.dirname(split_dict["Filepath"]),
+                      "/SDS Output - ",
+                      options["ID"],
+                      ".xlsx" ])
 
 
-
-            df_summary.to_excel("Out - Start Date Sensitivity.xlsx", sheet_name="Start Date Sensitivity")
+            df_summary.to_excel(out_ID, sheet_name="Start Date Sensitivity")
 
             if options["Plot Plume"] == "Yes":
                 f_plot_start_date_sensitivty_plume(df_summary, split_dict)
@@ -2586,14 +2618,8 @@ if __name__ == '__main__':
 
             if options["Save Files"] == "Yes":
                 out_d = {}
-                out_d["DF Percentiles"] = df_percentiles
                 out_d["DF Summary"] = df_summary
                 out_d["WBS"] = wbs
-                out_d["Start Dates"] = d_start_dates
-                out_d["End Dates"] = d_end_dates
-                out_d["Start Timesteps"] = d_start_ts
-                out_d["End Timesteps"] = d_end_ts
-                out_d["End Dates Unchanged"] = d_end_dates_unchanged
                 out_id = "".join([os.path.dirname(split_dict["Filepath"]),
                                   "/Aventis Out ",
                                   options["ID"], 
