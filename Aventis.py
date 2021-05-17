@@ -1894,6 +1894,7 @@ def f_complete_activity(duration, ts, weather_bool, weather_bool2):
         duration -= ntw
         ts += int(ts_aux + ntw)
         
+        
     return ts
 
 def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_dict, linked_activity_dates, sequence,  current_linked_activity_inds):
@@ -1914,6 +1915,12 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
 
     # find corresponding ts for dates
     linked_activity_counter = 0
+
+    #if ts >= len(dates):
+    #    remove_year = True
+    #    start_dates = ()
+    #    end_dates = ()
+    #    return start_ts, end_ts, start_dates, end_dates, remove_year 
     
     for i in range(0,len(wbs)):
 
@@ -1970,6 +1977,13 @@ def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
     ts = int(sim_start_ts)
 
     # find corresponding ts for dates
+
+    #if ts >= len(dates):
+    #    remove_year
+    #    start_dates = ()
+    #   end_dates = ()
+    #    return start_ts, end_ts, start_dates, end_dates, remove_year    
+
     
     
     for i in range(0,len(wbs)):
@@ -2085,6 +2099,9 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
             weather_inds = weather[weather_id_dummy].index[weather[weather_id_dummy].index > start_date]
             sim_start_ts = len(dates) - len(weather_inds)
 
+            if sim_start_ts == len(dates):
+                years = years[0:i]
+                break
 
             start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year(wbs, window_bool_dict,
                                                                                     sim_start_ts, dates,
