@@ -1939,7 +1939,7 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
         
         
 
-        if ts > len(dates):
+        if ts >= len(dates):
             print("We ran out of timesteps for ", wbs["Activity"].loc[i])
             remove_year =  True
             break
@@ -1987,7 +1987,7 @@ def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
         
         
 
-        if ts > len(dates):
+        if ts >= len(dates):
             print("We ran out of timesteps for ", wbs["Activity"].loc[i])
             remove_year =  True
             break
