@@ -1120,7 +1120,11 @@ def f_read_options(split_dict):
     options = pd.Series(options_df[options_df.columns[1]].values,index=options_df["Simulation Info"]).to_dict()
     #options = df.to_dict(orient="Index")
     del options["Sequence"]
-    del options["Conditioning Simulation"]
+    try:
+        del options["Linked Simulation"]
+    except:
+        del options["Conditioned Simulation"]
+      
     del options["Output"]
 
     #Weather- select subset of df and turn in to dictionary
@@ -1867,7 +1871,14 @@ def find_first(item, vec):
     return 100000
 
 
-def f_complete_activity(duration, window, ts, weather_bool, activity, dates, weather_bool2):
+def find_first_after(item, vec):
+    """return the index of the first occurence equal to or after of item in vec"""
+    for i in range(len(vec)):
+        if item < vec[i]:
+            return i
+    return "Couldn't satisfy first_after checker"
+
+def f_complete_activity(duration, ts, weather_bool, weather_bool2):
     """Complete next activity
     weather_bool is a bool that has already checked the windows
     window_bool is a bool of if it can work or not
@@ -1884,9 +1895,8 @@ def f_complete_activity(duration, window, ts, weather_bool, activity, dates, wea
         ts += int(ts_aux + ntw)
         
     return ts
-        
 
-def simulate_year(wbs, weather, window_bool_dict, start_date, sim_start_ts, dates, bool_dict):
+def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_dict, linked_activity_dates, sequence,  current_linked_activity_inds):
     """Jump from window to window, until everything is installed in a year
     input:
     - wbs pandas dataframe with work breakdown structure- activities with durations, weather windows and their limits
@@ -1902,6 +1912,66 @@ def simulate_year(wbs, weather, window_bool_dict, start_date, sim_start_ts, date
     #remove_year = False
     ts = int(sim_start_ts)
 
+    # find corresponding ts for dates
+    linked_activity_counter = 0
+    
+    for i in range(0,len(wbs)):
+
+        # if linked activity then check it is happening after prev sim
+        if (i in current_linked_activity_inds 
+            and dates[ts] < linked_activity_dates[linked_activity_counter]):
+        
+            ts_aux = find_first_after(linked_activity_dates[linked_activity_counter] + sequence["Days Float"][linked_activity_counter], dates[ts:])
+            ts = ts + ts_aux
+            linked_activity_counter += 1
+
+        start_ts[i] = ts
+
+
+        if wbs["Weather Boolean Key"].loc[i] == -1:
+            ts += int(wbs["Duration [timesteps]"].loc[i])
+
+        else:
+            ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
+                                    ts,
+                                    window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
+                                    bool_dict[wbs["Weather Boolean Key"].loc[i]])
+        
+        
+
+        if ts > len(dates):
+            print("We ran out of timesteps for ", wbs["Activity"].loc[i])
+            remove_year =  True
+            break
+
+        end_ts[i] = ts
+
+    start_ts = start_ts.astype(int)
+    end_ts = end_ts.astype(int)
+    start_dates = dates[start_ts]
+    end_dates = dates[end_ts]
+
+    return start_ts, end_ts, start_dates, end_dates, remove_year
+
+def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
+    """Jump from window to window, until everything is installed in a year
+    input:
+    - wbs pandas dataframe with work breakdown structure- activities with durations, weather windows and their limits
+    - weather files in a dataframe
+    - window_bool_dict, dictionary of booleans for work and can't work for each unique weather window limits
+    - start_date the start date of the simulation
+    - sim_start_ts the timestep that the simulation starts on
+    - dates the timestamps in the timeseries
+    """
+    remove_year =  False
+    start_ts = np.zeros(len(wbs))
+    end_ts = np.zeros(len(wbs))
+    #remove_year = False
+    ts = int(sim_start_ts)
+
+    # find corresponding ts for dates
+    
+    
     for i in range(0,len(wbs)):
 
         start_ts[i] = ts
@@ -1911,19 +1981,18 @@ def simulate_year(wbs, weather, window_bool_dict, start_date, sim_start_ts, date
 
         else:
             ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
-                                    wbs["Minimum Window Duration [timesteps]"].loc[i],
                                     ts,
                                     window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
-                                    wbs["Activity"].loc[i],
-                                    dates,
                                     bool_dict[wbs["Weather Boolean Key"].loc[i]])
         
-        end_ts[i] = ts
+        
 
         if ts > len(dates):
             print("We ran out of timesteps for ", wbs["Activity"].loc[i])
             remove_year =  True
             break
+
+        end_ts[i] = ts
 
     start_ts = start_ts.astype(int)
     end_ts = end_ts.astype(int)
@@ -1932,7 +2001,7 @@ def simulate_year(wbs, weather, window_bool_dict, start_date, sim_start_ts, date
 
     return start_ts, end_ts, start_dates, end_dates, remove_year
 
-def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict):
+def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence):
     """Simulate each year"""
     weather_id_dummy = list(weather.keys())[1]
     
@@ -1944,35 +2013,98 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict):
     d_end_ts = {}
     d_start_dates = {}
     d_end_dates = {}
+    d_end_dates_unchanged = {}
 
-
-    #start_dates = dates[0:len(years)]
-    for i in range(0,len(years)):
-        if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
-            print("Starting Simulation in: ", years[i])
-            
-        start_date = options["Input Date"].replace(year=years[i])
-        weather_inds = weather[weather_id_dummy].index[weather[weather_id_dummy].index > start_date]
-        sim_start_ts = len(dates) - len(weather_inds)
-
-        start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year(wbs, weather, window_bool_dict,
-                                                                                 start_date, sim_start_ts, dates,
-                                                                             bool_dict)
+    if options["Linked Simulation (Yes/ No)"] == "Yes":
         
-        #print(remove_year)
-        if remove_year:
-            years = years[0:i]
-            break
+        sequence["Days Float"] = pd.to_timedelta(sequence["Days Float"], 'd')
+        #find inds of linked activity (current simulation)
+        current_linked_activity_inds = list(wbs[wbs["Activity"] == options["Linked Activity (Current Simulation)"]].index)
+        current_linked_activity_locs = wbs["Location"][wbs["Activity"] == options["Linked Activity (Current Simulation)"]]
+        
+        if (all(np.unique(current_linked_activity_locs) != np.unique(linked_activity_locations))
+            or np.any(current_linked_activity_locs) == "Undefined"
+            or np.any(linked_activity_locations) == "Undefined"):
+            
+            new_inds = np.arange(len(current_linked_activity_locs))
+            print("The linked simulations do not have the same locations or have some undefined locations, so Aventis will assume that they have the same sequence")
 
-        d_start_ts[years[i]] = start_ts
-        d_end_ts[years[i]] = end_ts
 
-        d_start_dates[years[i]] = start_dates - (start_dates[0] - options["Input Date"])
-        d_end_dates[years[i]] = end_dates - (start_dates[0] - options["Input Date"])
+        ## haven't error checked this yet
+        else:
+            print("WARNING: Code does not yet check sequence of linked simulations and will assume the sequences are the same")
+            new_inds = np.zeros(len(current_linked_activity_locs))
+            
+            """counter = 0
+            new_inds = np.zeros(len(current_linked_activity_locs))
+            for location in current_linked_activity_locs:
+                new_inds[counter] = linked_activity_locations.index(location)
+                counter += 1
+
+            zipped_lists = zip(new_inds, linked_activity_dates)
+            sorted_zipped_lists = sorted(zipped_lists)
+            linked_activity_dates_aux = [element for _, element in sorted_zipped_lists]
+            linked_activity_dates = linked_activity_dates_aux
+            """
 
 
+        #start_dates = dates[0:len(years)]
+        for i in range(0,len(years)):
+            if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
+                print("Starting Simulation in: ", years[i])
+                
+            start_date = options["Input Date"].replace(year=years[i])
+            weather_inds = weather[weather_id_dummy].index[weather[weather_id_dummy].index > start_date]
+            sim_start_ts = len(dates) - len(weather_inds)
 
-    return d_start_ts, d_end_ts, d_start_dates, d_end_dates
+
+            start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year_conditioned(wbs, window_bool_dict,
+                                                                                    sim_start_ts, dates,
+                                                                                bool_dict, linked_activity_dates[years[i]], sequence, current_linked_activity_inds)
+        
+            #print(remove_year)
+            if remove_year:
+                years = years[0:i]
+                break
+                
+            d_start_ts[years[i]] = start_ts
+            d_end_ts[years[i]] = end_ts
+
+            #save unaltered for linked simulations
+            d_end_dates_unchanged[years[i]] = end_dates
+
+            d_start_dates[years[i]] = start_dates - (start_dates[0] - options["Input Date"])
+            d_end_dates[years[i]] = end_dates - (start_dates[0] - options["Input Date"])
+
+    else:
+        for i in range(0,len(years)):
+            if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
+                print("Starting Simulation in: ", years[i])
+                
+            start_date = options["Input Date"].replace(year=years[i])
+            weather_inds = weather[weather_id_dummy].index[weather[weather_id_dummy].index > start_date]
+            sim_start_ts = len(dates) - len(weather_inds)
+
+
+            start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year(wbs, window_bool_dict,
+                                                                                    sim_start_ts, dates,
+                                                                                bool_dict)
+        
+            #print(remove_year)
+            if remove_year:
+                years = years[0:i]
+                break
+                
+            d_start_ts[years[i]] = start_ts
+            d_end_ts[years[i]] = end_ts
+
+            #save unaltered for linked simulations
+            d_end_dates_unchanged[years[i]] = end_dates
+
+            d_start_dates[years[i]] = start_dates - (start_dates[0] - options["Input Date"])
+            d_end_dates[years[i]] = end_dates - (start_dates[0] - options["Input Date"])
+
+    return d_start_ts, d_end_ts, d_start_dates, d_end_dates, d_end_dates_unchanged
     
 ## Post Processing
 def f_create_percentiles(d_dates, percentiles_to_find):
@@ -2183,7 +2315,7 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
               fontsize=15, 
               color=sequential_colors[10],
               fontweight="bold")
-    _ = plt.xticks(rotation=70)
+    _ = plt.xticks(rotation=90)
     
     
     plot_ID = "".join([os.path.dirname(split_dict["Filepath"]),
@@ -2314,7 +2446,32 @@ if __name__ == '__main__':
         print("Simulation: Started")
         tic = time.time()
         if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
-            d_start_ts, d_end_ts, d_start_dates, d_end_dates = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict)
+
+            if options["Linked Simulation (Yes/ No)"] == "yes" or options["Linked Simulation (Yes/ No)"] == "Yes" or options["Linked Simulation (Yes/ No)"] == "Y":
+                
+                linked_sim_output = pickle.load(open(options["Previous Simulation or Set Dates"], "rb"))
+                linked_end_dates = linked_sim_output[0]["End Dates Unchanged"]
+                linked_wbs = linked_sim_output[0]["WBS"]
+                linked_activity = options["Linked Activity (Previous Simulation)"]
+                linked_activity_inds = list(linked_wbs[linked_wbs["Activity"] == linked_activity].index)
+                linked_activity_dates = {}
+                linked_activity_locations = linked_wbs["Location"].iloc[linked_activity_inds]
+
+                for key in linked_end_dates.keys():
+                    linked_activity_dates[key] = linked_end_dates[key][linked_activity_inds]
+                    
+            else:
+                linked_activity_dates = list()
+                linked_activity_locations = list()
+
+
+            
+
+            (d_start_ts,
+            d_end_ts,
+            d_start_dates,
+            d_end_dates,
+            d_end_dates_unchanged) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence)
 
             toc = time.time()
             print("Complete in", toc - tic, "s")
@@ -2341,16 +2498,18 @@ if __name__ == '__main__':
                     out_d["DF Percentiles"] = df_percentiles
                     out_d["DF Summary"] = df_summary
                     out_d["WBS"] = wbs
+                    out_d["Start Dates"] = d_start_dates
+                    out_d["End Dates"] = d_end_dates
+                    out_d["Start Timesteps"] = d_start_ts
+                    out_d["End Timesteps"] = d_end_ts
+                    out_d["End Dates Unchanged"] = d_end_dates_unchanged
                     out_id = "".join([os.path.dirname(split_dict["Filepath"]),
-                                      "/Aventis Out - ",
+                                      "/Aventis Out ",
                                       options["ID"], 
-                                      " Starting: ",
-                                      str(options["Input Date"]).rstrip(':-;.'),
-                                      " - ",
-                                      str(datetime.datetime.now())[0:10].rstrip(':-;.'),
-                                     ".pickle"]),
-
-
+                                      " ",
+                                      str(datetime.datetime.now())[0:10].strip(":;-,"),
+                                      ".p"])
+                    
                     with open(out_id, 'wb') as f:
                         pickle.dump([out_d], f)
 
@@ -2393,7 +2552,11 @@ if __name__ == '__main__':
 
 
 
-                d_start_ts, d_end_ts, d_start_dates, d_end_dates = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict)
+                (d_start_ts,
+                d_end_ts,
+                d_start_dates,
+                d_end_dates,
+                d_end_dates_unchanged) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence)
 
                 #d_start_dates_dict[str(start_date)] = d_start_dates
                 #d_end_dates_dict[str(start_date)] = d_end_dates
@@ -2423,15 +2586,20 @@ if __name__ == '__main__':
 
             if options["Save Files"] == "Yes":
                 out_d = {}
+                out_d["DF Percentiles"] = df_percentiles
                 out_d["DF Summary"] = df_summary
-                out_d["End Percentiles Dict"] = end_percentiles_dict
                 out_d["WBS"] = wbs
+                out_d["Start Dates"] = d_start_dates
+                out_d["End Dates"] = d_end_dates
+                out_d["Start Timesteps"] = d_start_ts
+                out_d["End Timesteps"] = d_end_ts
+                out_d["End Dates Unchanged"] = d_end_dates_unchanged
                 out_id = "".join([os.path.dirname(split_dict["Filepath"]),
-                                  "/Aventis Out - ",
+                                  "/Aventis Out ",
                                   options["ID"], 
-                                  " SDS - ",
-                                  str(datetime.datetime.now())[0:10].rstrip(':-;.'),
-                                 ".pickle"])
+                                  " ",
+                                  str(datetime.datetime.now())[0:10].strip(":;-,"),
+                                  ".p"])
 
 
                 with open(out_id, 'wb') as f:
