@@ -1668,6 +1668,7 @@ def f_create_all_bools(wbs, weather):
     window_inds_dict = {}
 
     wbs["Weather Boolean Key"] = "NA"
+    wbs["Boolean Key"] = "NA"
     wbs_only_limits = wbs.drop(columns=(["Activity",
                                         "Minimum Window Duration [hrs]",
                                         "Net Duration [hrs]",
@@ -1769,6 +1770,7 @@ def f_create_all_bools(wbs, weather):
 
                 like_activity_inds = np.asarray(wbs_only_limits == wbs_only_limits.loc[unique_val_ind]).all(axis = 1)
                 wbs.loc[like_activity_inds, ("Weather Boolean Key")] = unique_val_ind
+                wbs.loc[like_activity_inds, ("Boolean Key")] = unique_val_ind
 
             else:
                 like_activity_inds = np.asarray(wbs_only_limits == wbs_only_limits.loc[unique_val_ind]).all(axis = 1)
@@ -1942,7 +1944,7 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
             ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
                                     ts,
                                     window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
-                                    bool_dict[wbs["Weather Boolean Key"].loc[i]])
+                                    bool_dict[wbs["Boolean Key"].loc[i]])
         
         
 
@@ -1997,7 +1999,7 @@ def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
             ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
                                     ts,
                                     window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
-                                    bool_dict[wbs["Weather Boolean Key"].loc[i]])
+                                    bool_dict[wbs["Boolean Key"].loc[i]])
         
         
 
