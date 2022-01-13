@@ -1013,16 +1013,6 @@ def f_insert_fragnet(fragnet_names, fragnet_inds, wbs_aux, index, val, df):
 
     num_cycles = int(wbs_aux["Cycles"][index])
 
-    #create inds that will be used to insert the complex activity
-    #between the activities
-    #inds = np.linspace(index+0.01, index+1,
-    #                   int((fragnet_inds[1][frag_ind]-1
-    #                   - fragnet_inds[0][frag_ind]+1)
-    #                   * wbs_aux["Cycles"][index]))
-
-
-
-
     #fragnet dataframe which needs to be inserted in to wbs
     frags_df = pd.concat([df[df.index.isin
                             (range(fragnet_inds[0][frag_ind]+1,
@@ -1090,15 +1080,8 @@ def f_construct_wbs(split_dict):
         unwrapped_fragnet_dict[fragnet_name_aux] = df_fragnet_aux
 
 
-
     wbs = f_one_wbs_sweep(wbs, wbs_aux, unwrapped_fragnet_dict, fragnet_names)    
-
-    #wbs = wbs_aux
-
-    #tic = time.perf_counter()
     wbs_final = f_iron_out_multiples_wbs(wbs)
-    #toc = time.perf_counter()
-
 
     #Post wbs creation tid-bits
     wbs_final, timestep, error_bool = f_find_timestep(wbs_final)
@@ -1142,13 +1125,20 @@ def f_read_options(split_dict):
 def f_resample_timeseries_and_interp(weather_df, timestep):
     "Resample timeseries in to the desired timestep"
     ts = "".join([str(timestep), "H"])
+
+    # Assume datetime_series is continuous and has the same timestep throughout.
     datetime_series = weather_df.Dates
-    datetime_index = pd.DatetimeIndex(datetime_series.values)
+    timestep2 = datetime_series[1] - datetime_series[0]
+    timestep2_float = timestep2.total_seconds()/(60*60)
+    ts2 = "".join([str(timestep2_float), "H"])
+    datetime_index = pd.date_range(start=datetime_series[0], end=datetime_series[len(datetime_series)-1], freq=ts2)
+
     weather_df_aux = weather_df.set_index(datetime_index)
-    weather_df_new = weather_df_aux.asfreq(freq=ts).drop(columns="Dates")
-    weather_df_new = weather_df_new.interpolate()
-
-
+    # WTF IS GOING ON HERE?
+    #if we are upsampling then take the max value, if we are downsampling then interpolate between points
+    weather_df_new = weather_df_aux.resample(ts).max() 
+    if timestep < 1:
+        weather_df_new = weather_df_new.interpolate()
     return weather_df_new
 
 
@@ -2166,7 +2156,6 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
 
         if i == 0:
             df_for_csv[start_column_names[i]] = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h') - pd.to_timedelta(wbs["Net Duration [hrs]"].iloc[0], unit='h') + d_start_dates[list(d_start_dates.keys())[0]][0]
-            
             df_summary[summary_column_names[i]].loc[0] = np.round(wbs["Duration [timesteps]"].sum()/24*timestep,1)
 
         else:
