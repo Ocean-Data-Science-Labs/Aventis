@@ -1128,16 +1128,14 @@ def f_resample_timeseries_and_interp(weather_df, timestep):
 
     # Assume datetime_series is continuous and has the same timestep throughout.
     datetime_series = weather_df.Dates
-    timestep2 = datetime_series[1] - datetime_series[0]
-    timestep2_float = timestep2.total_seconds()/(60*60)
-    ts2 = "".join([str(timestep2_float), "H"])
-    datetime_index = pd.date_range(start=datetime_series[0], end=datetime_series[len(datetime_series)-1], freq=ts2)
-
-    weather_df_aux = weather_df.set_index(datetime_index)
+    timestep_orig = datetime_series[1] - datetime_series[0]
+    timestep_orig_float = timestep_orig.total_seconds()/(60*60)
+    
+    weather_df_aux = weather_df.set_index(datetime_series)
     # WTF IS GOING ON HERE?
     #if we are upsampling then take the max value, if we are downsampling then interpolate between points
     weather_df_new = weather_df_aux.resample(ts).max() 
-    if timestep < 1:
+    if timestep < timestep_orig_float:
         weather_df_new = weather_df_new.interpolate()
     return weather_df_new
 
