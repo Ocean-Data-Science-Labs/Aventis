@@ -779,7 +779,7 @@ def f_insert_fragnet_2(unwrapped_fragnet_dict, wbs_aux, index, val):
 
     num_cycles = int(wbs_aux["Cycles"][index])
 
-    #create inds that will be used to insert the complex activity
+    #create inds that will be used to insert the fragnet activity
     #between the activities
     # inds = np.linspace(index+0.01, index+1,
     #                   int(len(unwrapped_fragnet_dict[val])
@@ -1663,7 +1663,7 @@ def f_create_all_bools(wbs, weather):
                                         "Cycles",
                                         "Location",
                                         "Duration [timesteps]",
-                                        "Continuous With Previous"]))
+                                        "Continuous"]))
 
     #"Minimum Window Duration [timesteps]",
 
@@ -1769,7 +1769,7 @@ def f_create_all_bools(wbs, weather):
 
     return wbs, bool_dict, window_bool_dict, window_inds_dict
 
-def f_continuous_with_previous(wbs, options, window_bool_dict):
+def f_continuous_activity_bool(wbs, options, window_bool_dict):
     """ check continuous condition and create new booleans careful, 
     this only works if the required weather windows are longer 
     than the activity net duration
@@ -1780,10 +1780,10 @@ def f_continuous_with_previous(wbs, options, window_bool_dict):
 
     # find the activities that are continuous with each other by finding all Yes and using 
     # the diff function on the activity index
-    continuous_with_prev = list(compress(range(len(wbs["Continuous With Previous"] == "Yes")), 
-                                         wbs["Continuous With Previous"] == "Yes"))
-    continuous_with_prev_np = np.asarray(continuous_with_prev)
-    con_diff = np.diff(continuous_with_prev_np)
+    continuous_activities = list(compress(range(len(wbs["Continuous"] == "Yes")), 
+                                         wbs["Continuous"] == "Yes"))
+    continuous_activities_np = np.asarray(continuous_activities)
+    con_diff = np.diff(continuous_activities_np)
     np.insert(con_diff, 1, 0)
 
     # initialise some lists and a counter (the counter is for naming the dict key)
@@ -1802,19 +1802,17 @@ def f_continuous_with_previous(wbs, options, window_bool_dict):
     for i in range(0, len(con_diff)):
 
         # If continuous with each other
-        if con_diff[i] == 1:
-            list_of_acts.append(continuous_with_prev[i])
-            list_of_durs.append(wbs["Duration [timesteps]"].loc[continuous_with_prev[i]])
-            list_of_bools.append(wbs["Weather Boolean Key"].loc[continuous_with_prev[i]])
+        if con_diff[i] == 1 or i != len(con_diff)-1:
+            list_of_acts.append(continuous_activities[i])
+            list_of_durs.append(wbs["Duration [timesteps]"].loc[continuous_activities[i]])
+            list_of_bools.append(wbs["Weather Boolean Key"].loc[continuous_activities[i]])
 
 
         # if not continuous then find the windows of all the listed activities    
-        if con_diff[i] != 1:
-            
-
-            list_of_acts.append(continuous_with_prev[i])
-            list_of_durs.append(wbs["Duration [timesteps]"].loc[continuous_with_prev[i]])
-            list_of_bools.append(wbs["Weather Boolean Key"].loc[continuous_with_prev[i]])
+        if con_diff[i] != 1 or i == len(con_diff)-1:
+            list_of_acts.append(continuous_activities[i])
+            list_of_durs.append(wbs["Duration [timesteps]"].loc[continuous_activities[i]])
+            list_of_bools.append(wbs["Weather Boolean Key"].loc[continuous_activities[i]])
 
             bool_array = np.zeros([len(list_of_bools), len(window_bool_dict[0])])
 
@@ -2444,8 +2442,8 @@ if __name__ == '__main__':
         print("Weather Booleans: Started")
         tic = time.time()
         wbs, bool_dict, window_bool_dict, window_inds_dict = f_create_all_bools(wbs, weather)
-        if any(wbs["Continuous With Previous"] == "Yes"):
-            wbs, window_bool_dict = f_continuous_with_previous(wbs, options, window_bool_dict)
+        if any(wbs["Continuous"] == "Yes"):
+            wbs, window_bool_dict = f_continuous_activity_bool(wbs, options, window_bool_dict)
         toc = time.time()
         print("Complete in", toc - tic, "s")
         print("----------------------------------------------------------------------")
