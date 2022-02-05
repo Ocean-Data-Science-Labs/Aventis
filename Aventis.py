@@ -984,6 +984,9 @@ def f_find_timestep(wbs):
             timestep = 1
             print("Oh Ohh: we could not find a timestep that worked for the wbs, timestep defaulted to 1 hr")
 
+        #timestep not working too well, so just default to 0.5hr
+        timestep = 0.5
+        print("acutally your timestep is equal to 0.5hrs")
         wbs["Duration [timesteps]"] = netdurs/timestep
         wbs["Minimum Window Duration [timesteps]"] = netdurs2/timestep
 
