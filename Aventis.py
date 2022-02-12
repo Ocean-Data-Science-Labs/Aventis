@@ -675,6 +675,7 @@ Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
 """
 
+from cmath import nan
 import pandas as pd
 import numpy as np
 import time
@@ -986,7 +987,7 @@ def f_find_timestep(wbs):
 
         #timestep not working too well, so just default to 0.5hr
         timestep = 0.5
-        print("acutally your timestep is equal to 0.5hrs")
+        print("actually your timestep is equal to 0.5hrs")
         wbs["Duration [timesteps]"] = netdurs/timestep
         wbs["Minimum Window Duration [timesteps]"] = netdurs2/timestep
 
@@ -1085,7 +1086,7 @@ def f_construct_wbs(split_dict):
 
     wbs = f_one_wbs_sweep(wbs, wbs_aux, unwrapped_fragnet_dict, fragnet_names)    
     wbs_final = f_iron_out_multiples_wbs(wbs)
-
+    
     #Post wbs creation tid-bits
     wbs_final, timestep, error_bool = f_find_timestep(wbs_final)
     if error_bool == False:
@@ -1093,7 +1094,10 @@ def f_construct_wbs(split_dict):
     
     else:
         weather_IDs = 'NA'
-        
+
+    #squeeze in one final column relevant if parallel activities in wbs
+    wbs_final["Waiting on Parallel Activity [timesteps]"] = 0 
+
     return wbs_final, timestep, weather_IDs, error_bool
 
 def f_read_options(split_dict):
@@ -1859,7 +1863,7 @@ def find_first(item, vec):
     for i in range(len(vec)):
         if item == vec[i]:
             return i
-    return 100000
+    return 1000000
 
 
 def find_first_after(item, vec):
@@ -1914,35 +1918,88 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
     #    return start_ts, end_ts, start_dates, end_dates, remove_year 
     
     for i in range(0,len(wbs)):
-
-        # if linked activity then check it is happening after prev sim
-        if (i in current_linked_activity_inds 
-            and dates[ts] < linked_activity_dates[linked_activity_counter]):
         
-            ts_aux = find_first_after(linked_activity_dates[linked_activity_counter] + sequence["Days Float"][linked_activity_counter], dates[ts:])
-            ts = ts + ts_aux
+        # if linked activity then check it is happening after prev sim
+        if (i in current_linked_activity_inds):
+            
+            if dates[ts] < linked_activity_dates[linked_activity_counter]:
+                ts_aux = find_first_after(linked_activity_dates[linked_activity_counter] + sequence["Days Float"][linked_activity_counter], dates[ts:])
+                ts = ts + ts_aux
+            
             linked_activity_counter += 1
 
-        start_ts[i] = ts
+        # if we find a parallel activity to model then we need to set up a parallel time ts_par
+        if wbs["Parallel"].iloc[i] == "Yes":
+            if wbs["Parallel"].iloc[i-1] == "NA":
+                ts_par = ts 
+                
+            start_ts[i] = ts_par
 
+            if wbs["Weather Boolean Key"].loc[i] == -1:
+                ts_par += int(wbs["Duration [timesteps]"].loc[i])
 
-        if wbs["Weather Boolean Key"].loc[i] == -1:
-            ts += int(wbs["Duration [timesteps]"].loc[i])
+            else:
+                ts_par = f_complete_activity(wbs["Parallel Duration [hrs]"].loc[i]/timestep,
+                                        ts_par,
+                                        window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
+                                        bool_dict[wbs["Boolean Key"].loc[i]])
 
+            if ts_par >= len(dates):
+                print("We ran out of timesteps for ", wbs["Activity"].loc[i])
+                remove_year =  True
+                break
+
+            end_ts[i] = ts_par            
+            
+            #Mark the future limited activty
+            if wbs["Limit Activity"].iloc[i] != 'NA':
+                #print(["Trying to limit: ", wbs["Limit Activity"].iloc[i], "activity, ", i])    
+                # need to mark the future activity, and make sure it's the right one
+                # cond0 is that it hasn't already been marked (to avoid duplicate markings)
+                # cond1 is to make sure its the right named activity
+                conds = np.zeros([2,len(list(wbs["Parallel Duration [hrs]"].iloc[i:] == -999))])
+                conds[0,:] = list(wbs["Parallel Duration [hrs]"].iloc[i:] != -999)
+                conds[1,:] = list(wbs["Activity"].iloc[i:] == wbs["Limit Activity"].iloc[i])
+                both_conds = np.all(conds,0)
+                limited_act_ind = find_first(True, both_conds)+i
+
+                if limited_act_ind < len(wbs["Parallel Duration [hrs]"]):
+                    wbs["Parallel Duration [hrs]"].iloc[limited_act_ind] = -999 #mark the activity as limited
+                    wbs["Limit Activity"].iloc[limited_act_ind] = i #Find old limiting activity ind
+                
+                #else:
+                    #print(["Couldn't find another", wbs["Limit Activity"].iloc[i], "activity to limit"])
+                
+        # Else it is not parallel so cary on with normal ts
         else:
-            ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
-                                    ts,
-                                    window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
-                                    bool_dict[wbs["Boolean Key"].loc[i]])
-        
-        
+            if type(wbs["Parallel Duration [hrs]"].iloc[i]) != str:
+                if wbs["Parallel Duration [hrs]"].iloc[i] == -999:
+                    ind_for_limit_act = int(wbs["Limit Activity"].iloc[i])
+                    if end_ts[ind_for_limit_act] > ts:
+                        wbs["Waiting on Parallel Activity [timesteps]"].iloc[i] = end_ts[ind_for_limit_act] - ts
+                        ts = int(end_ts[ind_for_limit_act])
+                         
+                        # Should Flag Waiting on Parallel Activity!!
 
-        if ts >= len(dates):
-            print("We ran out of timesteps for ", wbs["Activity"].loc[i])
-            remove_year =  True
-            break
+                
+            start_ts[i] = ts
 
-        end_ts[i] = ts
+
+            if wbs["Weather Boolean Key"].loc[i] == -1:
+                ts += int(wbs["Duration [timesteps]"].loc[i])
+
+            else:
+                ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
+                                        ts,
+                                        window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
+                                        bool_dict[wbs["Boolean Key"].loc[i]])
+
+            if ts >= len(dates):
+                print("We ran out of timesteps for ", wbs["Activity"].loc[i])
+                remove_year =  True
+                break
+
+            end_ts[i] = ts
 
     start_ts = start_ts.astype(int)
     end_ts = end_ts.astype(int)
@@ -1976,28 +2033,78 @@ def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
     #    return start_ts, end_ts, start_dates, end_dates, remove_year    
 
     
-    
     for i in range(0,len(wbs)):
 
-        start_ts[i] = ts
+        # if we find a parallel activity to model then we need to set up a parallel time ts_par
+        if wbs["Parallel"].iloc[i] == "Yes":
+            if wbs["Parallel"].iloc[i-1] == "NA":
+                ts_par = ts 
+                
+            start_ts[i] = ts_par
 
-        if wbs["Weather Boolean Key"].loc[i] == -1:
-            ts += int(wbs["Duration [timesteps]"].loc[i])
+            if wbs["Weather Boolean Key"].loc[i] == -1:
+                ts_par += int(wbs["Duration [timesteps]"].loc[i])
 
+            else:
+                ts_par = f_complete_activity(wbs["Parallel Duration [hrs]"].loc[i]/timestep,
+                                        ts_par,
+                                        window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
+                                        bool_dict[wbs["Boolean Key"].loc[i]])
+
+            if ts_par >= len(dates):
+                print("We ran out of timesteps for ", wbs["Activity"].loc[i])
+                remove_year =  True
+                break
+
+            end_ts[i] = ts_par
+            
+            #Mark the future limited activty
+            if wbs["Limit Activity"].iloc[i] != 'NA':
+                #print(["Trying to limit: ", wbs["Limit Activity"].iloc[i], "activity, ", i])    
+                # need to mark the future activity, and make sure it's the right one
+                # cond0 is that it hasn't already been marked (to avoid duplicate markings)
+                # cond1 is to make sure its the right named activity
+                conds = np.zeros([2,len(list(wbs["Parallel Duration [hrs]"].iloc[i:] == -999))])
+                conds[0,:] = list(wbs["Parallel Duration [hrs]"].iloc[i:] != -999)
+                conds[1,:] = list(wbs["Activity"].iloc[i:] == wbs["Limit Activity"].iloc[i])
+                both_conds = np.all(conds,0)
+                limited_act_ind = find_first(True, both_conds)+i
+
+                if limited_act_ind < len(wbs["Parallel Duration [hrs]"]):
+                    wbs["Parallel Duration [hrs]"].iloc[limited_act_ind] = -999 #mark the activity as limited
+                    wbs["Limit Activity"].iloc[limited_act_ind] = i #Find old limiting activity ind
+                
+                #else:
+                    #print(["Couldn't find another", wbs["Limit Activity"].iloc[i], "activity to limit"])
+                
+        # Else it is not parallel so cary on with normal ts
         else:
-            ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
-                                    ts,
-                                    window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
-                                    bool_dict[wbs["Boolean Key"].loc[i]])
-        
-        
+            if type(wbs["Parallel Duration [hrs]"].iloc[i]) != str:
+                if wbs["Parallel Duration [hrs]"].iloc[i] == -999:
+                    ind_for_limit_act = int(wbs["Limit Activity"].iloc[i])
+                    if end_ts[ind_for_limit_act] > ts:
+                        wbs["Waiting on Parallel Activity [timesteps]"].iloc[i] = end_ts[ind_for_limit_act] - ts
+                        ts = int(end_ts[ind_for_limit_act])
 
-        if ts >= len(dates):
-            print("We ran out of timesteps for ", wbs["Activity"].loc[i])
-            remove_year =  True
-            break
+            start_ts[i] = ts
 
-        end_ts[i] = ts
+            if wbs["Weather Boolean Key"].loc[i] == -1:
+                ts += int(wbs["Duration [timesteps]"].loc[i])
+
+            else:
+                ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
+                                        ts,
+                                        window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
+                                        bool_dict[wbs["Boolean Key"].loc[i]])
+            
+            
+
+            if ts >= len(dates):
+                print("We ran out of timesteps for ", wbs["Activity"].loc[i])
+                remove_year =  True
+                break
+
+            end_ts[i] = ts
 
     start_ts = start_ts.astype(int)
     end_ts = end_ts.astype(int)
@@ -2055,7 +2162,7 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
 
         #start_dates = dates[0:len(years)]
         for i in range(0,len(years)):
-            if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
+            if options["Simulation Type (Set Start/ Set End/ Date Range)"] == "Set Start":
                 print("Starting Simulation in: ", years[i])
                 
             start_date = options["Input Date"].replace(year=years[i])
@@ -2083,7 +2190,7 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
 
     else:
         for i in range(0,len(years)):
-            if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
+            if options["Simulation Type (Set Start/ Set End/ Date Range)"] == "Set Start":
                 print("Starting Simulation in: ", years[i])
                 
             start_date = options["Input Date"].replace(year=years[i])
@@ -2313,7 +2420,7 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
     wdt_all = np.sum(wdt, axis=0)
 
     wbs["WDT"] = wdt_all 
-    wbs["Counter"] = 1
+    wbs["Counter"] = len(d_end_ts.keys())
     activity_wdt = wbs.groupby(["Activity"])["WDT"].sum()/wbs.groupby(["Activity"])["Counter"].sum()
     activity_wdt = activity_wdt.sort_values(ascending=False)
     plt.scatter(activity_wdt.index,activity_wdt*timestep)
@@ -2452,7 +2559,7 @@ if __name__ == '__main__':
         print("----------------------------------------------------------------------")
         print("Simulation: Started")
         tic = time.time()
-        if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Set Start":
+        if options["Simulation Type (Set Start/ Set End/ Date Range)"] == "Set Start":
 
             if options["Linked Simulation (Yes/ No)"] == "yes" or options["Linked Simulation (Yes/ No)"] == "Yes" or options["Linked Simulation (Yes/ No)"] == "Y":
                 #So what are we doing here? well... we are finding the dates of each of the linked activities in the previous simulation.
@@ -2537,12 +2644,12 @@ if __name__ == '__main__':
 
 
 
-        if options["Simulation Type (Set Start/ Set End/ Sensitivity)"] == "Sensitivity":
+        if options["Simulation Type (Set Start/ Set End/ Date Range)"] == "Date Range":
             tic = time.time()
 
 
             input_date = options["Input Date"]
-            input_date2 = options["Input Date 2 (Only needed for Sensitivity)"]
+            input_date2 = options["Input Date 2 (Only needed for Date Range)"]
             start_dates = pd.date_range(start=input_date, end=input_date2)
             percentiles_to_find = np.linspace(10, 100, 10)
 
@@ -2617,7 +2724,7 @@ if __name__ == '__main__':
                       ".xlsx" ])
 
 
-            df_summary.to_excel(out_ID, sheet_name="Start Date Sensitivity")
+            df_summary.to_excel(out_ID, sheet_name="Date Range")
 
             if options["Plot Plume"] == "Yes":
                 f_plot_start_date_sensitivty_plume(df_summary, split_dict)
