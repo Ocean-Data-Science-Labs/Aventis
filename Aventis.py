@@ -1821,7 +1821,12 @@ def f_continuous_activity_bool(wbs, options, window_bool_dict):
             list_of_durs.append(wbs["Duration [timesteps]"].loc[continuous_activities[i]])
             list_of_bools.append(wbs["Weather Boolean Key"].loc[continuous_activities[i]])
 
-            bool_array = np.zeros([len(list_of_bools), len(window_bool_dict[0])])
+            # try the first window_bool_dict entry. However if the first activity is a milestone then 
+            # we need to take the second window_bool_dict entry
+            try:
+                bool_array = np.zeros([len(list_of_bools), len(window_bool_dict[0])])
+            except:
+                bool_array = np.zeros([len(list_of_bools), len(window_bool_dict[1])])
 
             inds = np.zeros([len(list_of_bools)])
 
@@ -2169,11 +2174,15 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
             weather_inds = weather[weather_id_dummy].index[weather[weather_id_dummy].index > start_date]
             sim_start_ts = len(dates) - len(weather_inds)
 
+            # if the linked simulation is over a year then we have to cut this sim by a year as well- hence this check!
+            if years[i] in linked_activity_dates.keys(): 
 
-            start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year_conditioned(wbs, window_bool_dict,
-                                                                                    sim_start_ts, dates,
-                                                                                bool_dict, linked_activity_dates[years[i]], sequence, current_linked_activity_inds)
-        
+                start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year_conditioned(wbs, window_bool_dict,
+                                                                                        sim_start_ts, dates,
+                                                                                    bool_dict, linked_activity_dates[years[i]], sequence, current_linked_activity_inds)
+            else:
+                remove_year = True
+
             #print(remove_year)
             if remove_year:
                 years = years[0:i]
@@ -2305,39 +2314,40 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     ID = options["ID"]
     labels = wbs["Location"][wbs["Activity"] == options["Activity that Marks End of Location"]]
     ticks = labels.index
-    
+    yvals = np.linspace(0, 100, len(ticks))
+    marked_act_inds = list(labels.index)
     # if we have a working sequence then plot it with a sequence, if not then plot as % completion
     
     if any(labels == "Undefined"):
-        
-        labels = np.linspace(0, 100, len(ticks))
+        marked_act_inds = list(labels.index)
+        labels = np.arange(1, len(ticks)+1)
         
         for i in range(0,4):
 
-            plt.fill_betweenx(np.linspace(0,100,len(wbs)), 
-                              p_end_dates[i,:], 
-                              p_end_dates[9-i,:],  
+            plt.fill_betweenx(yvals, 
+                              p_end_dates[i,marked_act_inds], 
+                              p_end_dates[9-i,marked_act_inds],  
                               color=sequential_colors[i], 
                               alpha= 0.8 + 0.05*i,
                                 label="".join(["P", str(int(i+1)), "0", "- P", str(int(9-i)), "0"]))
 
 
-        plt.plot(p_end_dates[4,:],
-                 np.linspace(0,100,len(wbs)), 
+        plt.plot(p_end_dates[4,marked_act_inds],
+                 yvals, 
                  color=sequential_colors[10], 
                  linestyle='--', 
                  linewidth=1,
                  label="P50")
         
-        plt.plot(p_end_dates[0,:],
-                 np.linspace(0,100,len(wbs)),
+        plt.plot(p_end_dates[0,marked_act_inds],
+                 yvals,
                  color=sequential_colors[10],
                  linestyle='-.',
                  linewidth=0.8,
                  label="P10")
         
-        plt.plot(p_end_dates[9,:],
-                 np.linspace(0,100,len(wbs)),
+        plt.plot(p_end_dates[9,marked_act_inds],
+                 yvals,
                  color=sequential_colors[10],
                  linestyle='-.',
                  linewidth=0.8,
@@ -2350,30 +2360,30 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     else:
         for i in range(0,4):
 
-            plt.fill_betweenx(np.linspace(0,len(wbs),len(wbs)),
-                              p_end_dates[i,:],
-                              p_end_dates[9-i,:],
+            plt.fill_betweenx(yvals,
+                              p_end_dates[i,marked_act_inds],
+                              p_end_dates[9-i,marked_act_inds],
                               color=sequential_colors[i],
                               alpha= 0.8 + 0.05*i,
                               label="".join(["P", str(int(i+1)), "0", "- P", str(int(9-i)), "0"]))
 
 
-        plt.plot(p_end_dates[4,:],
-                 np.linspace(0,len(wbs),len(wbs)),
+        plt.plot(p_end_dates[4,marked_act_inds],
+                 yvals,
                  color=sequential_colors[10],
                  linestyle='--',
                  linewidth=1,
                  label="P50")
         
-        plt.plot(p_end_dates[0,:],
-                 np.linspace(0,len(wbs),len(wbs)),
+        plt.plot(p_end_dates[0,marked_act_inds],
+                 yvals,
                  color=sequential_colors[10],
                  linestyle='-.',
                  linewidth=0.8,
                  label="P10")
         
-        plt.plot(p_end_dates[9,:],
-                 np.linspace(0,len(wbs),len(wbs)),
+        plt.plot(p_end_dates[9,marked_act_inds],
+                 yvals,
                  color=sequential_colors[10],
                  linestyle='-.',
                  linewidth=0.8,
