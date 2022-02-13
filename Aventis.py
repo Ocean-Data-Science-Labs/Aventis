@@ -683,7 +683,7 @@ import math
 import pickle
 import matplotlib.pyplot as plt
 from tkinter.filedialog import askopenfilename
-import seaborn as sns
+#import seaborn as sns
 import datetime
 import os
 import sys
@@ -2309,7 +2309,9 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     
     """
     
-    sequential_colors = sns.color_palette("PuBu",11)
+    #sequential_colors = sns.color_palette("PuBu",11)
+    colour = '#57A4C1' #ODSL 1
+    colour2 = '#3B6596' #ODSL 2
     plt.figure(figsize=[10, 10])
     ID = options["ID"]
     labels = wbs["Location"][wbs["Activity"] == options["Activity that Marks End of Location"]]
@@ -2322,35 +2324,35 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
         marked_act_inds = list(labels.index)
         labels = np.arange(1, len(ticks)+1)
         
-        for i in range(0,4):
+        for i in range(0,3):
 
             plt.fill_betweenx(yvals, 
-                              p_end_dates[i,marked_act_inds], 
-                              p_end_dates[9-i,marked_act_inds],  
-                              color=sequential_colors[i], 
-                              alpha= 0.8 + 0.05*i,
+                              p_end_dates[1+i,marked_act_inds], 
+                              p_end_dates[8-i,marked_act_inds],  
+                              color=colour, 
+                              alpha= 0.5 + 0.1*i,
                                 label="".join(["P", str(int(i+1)), "0", "- P", str(int(9-i)), "0"]))
 
 
         plt.plot(p_end_dates[4,marked_act_inds],
                  yvals, 
-                 color=sequential_colors[10], 
-                 linestyle='--', 
-                 linewidth=1,
+                 color=colour2, 
+                 linestyle='-', 
+                 linewidth=2,
                  label="P50")
         
-        plt.plot(p_end_dates[0,marked_act_inds],
+        plt.plot(p_end_dates[1,marked_act_inds],
                  yvals,
-                 color=sequential_colors[10],
+                 color=colour2,
                  linestyle='-.',
-                 linewidth=0.8,
-                 label="P10")
+                 linewidth=2,
+                 label="P20")
         
-        plt.plot(p_end_dates[9,marked_act_inds],
+        plt.plot(p_end_dates[8,marked_act_inds],
                  yvals,
-                 color=sequential_colors[10],
-                 linestyle='-.',
-                 linewidth=0.8,
+                 color=colour2,
+                 linestyle='--',
+                 linewidth=2,
                  label="P80")
     
         plt.ylabel("Campaign Completion [%]")
@@ -2358,34 +2360,34 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
         
         
     else:
-        for i in range(0,4):
+        for i in range(0,3):
 
             plt.fill_betweenx(yvals,
-                              p_end_dates[i,marked_act_inds],
-                              p_end_dates[9-i,marked_act_inds],
-                              color=sequential_colors[i],
-                              alpha= 0.8 + 0.05*i,
-                              label="".join(["P", str(int(i+1)), "0", "- P", str(int(9-i)), "0"]))
+                              p_end_dates[1+i,marked_act_inds],
+                              p_end_dates[8-i,marked_act_inds],
+                              color=colour,
+                              alpha= 0.5 + 0.1*i,
+                              label="".join(["P", str(int(i+1)), "0", "- P", str(int(8-i)), "0"]))
 
 
         plt.plot(p_end_dates[4,marked_act_inds],
                  yvals,
-                 color=sequential_colors[10],
-                 linestyle='--',
+                 color=colour2,
+                 linestyle='-',
                  linewidth=1,
                  label="P50")
         
-        plt.plot(p_end_dates[0,marked_act_inds],
+        plt.plot(p_end_dates[1,marked_act_inds],
                  yvals,
-                 color=sequential_colors[10],
+                 color=colour2,
                  linestyle='-.',
                  linewidth=0.8,
                  label="P10")
         
-        plt.plot(p_end_dates[9,marked_act_inds],
+        plt.plot(p_end_dates[8,marked_act_inds],
                  yvals,
-                 color=sequential_colors[10],
-                 linestyle='-.',
+                 color=colour2,
+                 linestyle='--',
                  linewidth=0.8,
                  label="P90")
     
@@ -2401,8 +2403,9 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
                        str(len(labels)),
                        " locations"]),
               fontsize=15, 
-              color=sequential_colors[10],
+              color=colour,
               fontweight="bold")
+    plt.grid()
 
         
     percentile_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
@@ -2415,7 +2418,10 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
 def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict):
     """calculate and plot the mean WDT for each activity"""
     
-    sequential_colors = sns.color_palette("PuBu",11)
+    #sequential_colors = sns.color_palette("PuBu",11)
+    colour = '#57A4C1' #ODSL 1
+    colour2 = '#3B6596' #ODSL 2
+    
     plt.figure(figsize=[15, 15])
     wdt = np.zeros([len(d_end_ts.keys()), len(wbs)])
 
@@ -2433,11 +2439,11 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
     wbs["Counter"] = len(d_end_ts.keys())
     activity_wdt = wbs.groupby(["Activity"])["WDT"].sum()/wbs.groupby(["Activity"])["Counter"].sum()
     activity_wdt = activity_wdt.sort_values(ascending=False)
-    plt.scatter(activity_wdt.index,activity_wdt*timestep)
+    plt.scatter(activity_wdt.index,activity_wdt*timestep, color=colour)
     plt.ylabel("Mean WDT [hrs]")
     plt.title("".join(["WDT by Activity for ", options["ID"]]),              
               fontsize=15, 
-              color=sequential_colors[10],
+              color=colour2,
               fontweight="bold")
     _ = plt.xticks(rotation=90)
     
@@ -2481,9 +2487,9 @@ def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_
 def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
 
     figure = plt.figure(figsize=[20, 8])
-    sequential_colors = sns.color_palette("PuBu",11)
-
-
+    #sequential_colors = sns.color_palette("PuBu",11)
+    colour = '#57A4C1' #ODSL 1
+    colour2 = '#3B6596' #ODSL 2
     counter = 0
     for col in reversed(df_summary.columns):
 
@@ -2492,8 +2498,8 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
         
         plt.fill_between(x=np.squeeze(list(df_summary[col].index)),
                          y1=list(df_summary[col].values),
-                         color=sequential_colors[counter],
-                         alpha=0.6,
+                         color=colour,
+                         alpha=0.5+counter*0.05,
                          label=col)
 
         if counter == 0:
@@ -2510,7 +2516,7 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
     plt.xlabel("Start Date", fontsize=14)
     plt.title("Start Date Sensitivity",               
               fontsize=15, 
-              color=sequential_colors[10],
+              color=colour2,
               fontweight="bold")
     
 
@@ -2526,7 +2532,7 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
 # Apply the default theme
 
 if __name__ == '__main__':
-    sns.set_style("darkgrid")
+    #sns.set_style("darkgrid")
     split_dict = f_split_input_sheet()
     print()
     print("Constructing WBS: Started")
