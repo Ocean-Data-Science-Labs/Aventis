@@ -8,7 +8,7 @@ GNU GENERAL PUBLIC LICENSE
 
                             Preamble
 
-  The GNU General Public License is a free, copyleft license for
+The GNU General Public License is a free, copyleft license for
 software and other kinds of works.
 
   The licenses for most software and other practical works are designed
@@ -2320,7 +2320,7 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     marked_act_inds = list(labels.index)
     # if we have a working sequence then plot it with a sequence, if not then plot as % completion
     
-    if any(labels == "Undefined"):
+    if any(labels == "Undefined") or any(labels == "Port"):
         marked_act_inds = list(labels.index)
         labels = np.arange(1, len(ticks)+1)
         
@@ -2393,8 +2393,10 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     
         plt.ylabel("Location")
         plt.yticks(ticks, labels)
+        
     
     plt.legend()
+    plt.xticks(rotation=45)
     plt.title("".join(["Percentile Plume of ",
                        ID,
                        " - ",
@@ -2406,8 +2408,6 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
               color=colour,
               fontweight="bold")
     plt.grid()
-
-        
     percentile_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/Percentile Plume -",
                                    ID,
