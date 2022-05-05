@@ -772,11 +772,8 @@ def f_insert_fragnet_2(unwrapped_fragnet_dict, wbs_aux, index, val):
     index is the index in wbs_aux where the fragnet exists
     val is the name of the fragnet to be inserted
     df is the original fragnet"""
-
-
     #frag_ind = [i for i, x in enumerate(fragnet_names.str.contains(val)) if x]
     #frag_ind = frag_ind[0]
-
 
     num_cycles = int(wbs_aux["Cycles"][index])
 
@@ -785,8 +782,6 @@ def f_insert_fragnet_2(unwrapped_fragnet_dict, wbs_aux, index, val):
     # inds = np.linspace(index+0.01, index+1,
     #                   int(len(unwrapped_fragnet_dict[val])
     #                   * wbs_aux["Cycles"][index]))
-
-
 
 
     #fragnet dataframe which needs to be inserted in to wbs
@@ -1139,7 +1134,6 @@ def f_resample_timeseries_and_interp(weather_df, timestep):
     timestep_orig_float = timestep_orig.total_seconds()/(60*60)
     
     weather_df_aux = weather_df.set_index(datetime_series)
-    # WTF IS GOING ON HERE?
     #if we are upsampling then take the max value, if we are downsampling then interpolate between points
     weather_df_new = weather_df_aux.resample(ts).max() 
     if timestep < timestep_orig_float:
@@ -1404,10 +1398,15 @@ def f_import_weather_and_create_vectors(weather_sources, weather_IDs, timestep):
     weather = f_import_all_weather_csvs(weather_sources, weather_IDs, timestep)
 
     for weather_ID in weather_IDs:
-        timeseries_input = pd.read_excel(split_dict["Filepath"], skiprows=2, sheet_name=weather_ID)
+
+        try:
+            timeseries_input = pd.read_excel(split_dict["Filepath"], skiprows=2, sheet_name=weather_ID)
         #print(timeseries_input)
-        weather = f_add_derived_parameters(timeseries_input, weather_ID, weather)
-        weather = f_derive_bool_for_timeseries(timeseries_input, weather, weather_ID)
+            weather = f_add_derived_parameters(timeseries_input, weather_ID, weather)
+            weather = f_derive_bool_for_timeseries(timeseries_input, weather, weather_ID)
+
+        except:
+            print("".join(['No sheet for ', weather_ID, ' so no changes have been made to the timeseries']))
 
     return weather
 
@@ -1695,14 +1694,10 @@ def f_create_all_bools(wbs, weather):
         # this code does not yet use the andor, it defaults everything to or
 
         for unique_val_ind in unique_vals_aux:
-
-
             #print("Creating Bool for: ", wbs.loc[unique_val_ind, ("Activity")])
             conditions = list(wbs_only_limits_aux.loc[unique_val_ind])
-
             # print("Conditions to be tested")
             # print(conditions)
-
             #find number of conditions in the sheet
             indices_ww = [i for i, x in enumerate(list(wbs_only_limits_aux.columns)) if "Minimum Window Duration [timesteps]" in x]
             indices_val = [i for i, x in enumerate(list(wbs_only_limits_aux.columns)) if "Value" in x]
@@ -1711,7 +1706,6 @@ def f_create_all_bools(wbs, weather):
             indices_andor = [i for i, x in enumerate(list(wbs_only_limits_aux.columns)) if "And" in x]
 
             num_NA = list(wbs_only_limits_aux.loc[unique_val_ind][indices_val]).count("NA")
-
 
             #remove all NA columns
             if num_NA > 0:
@@ -1724,7 +1718,6 @@ def f_create_all_bools(wbs, weather):
             if len(indices_val):
                 bool_aux = np.zeros([len(indices_val), len(weather_aux)], dtype=bool)
 
-
                 for j in range(0, len(indices_val)):
 
                     val_aux = conditions[indices_val[j]]
@@ -1735,7 +1728,6 @@ def f_create_all_bools(wbs, weather):
 
 
                 if len(indices_val) > 1:
-                
                     bool_aux = bool_aux.all(axis = 0)
                 
                 # finally, create an entry in to the bool dictionart (bool_dict)
@@ -1746,8 +1738,6 @@ def f_create_all_bools(wbs, weather):
                 # like activities for later calling
 
                 bool_dict[unique_val_ind] = np.squeeze(bool_aux)
-
-
                 values = bool_dict[unique_val_ind]
                 searchvals = np.ones(int(conditions[indices_ww[0]]))
 
@@ -2475,7 +2465,7 @@ def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_
     
     
     summary_stats = (p_end_dates[:,len(p_end_dates[0])-1] 
-                     -  p_start_dates[:,0]).astype('timedelta64[D]').astype('float')
+                     -  p_start_dates[:,0]).astype('timedelta64[h]').astype('float')/24
 
 
     for i in range(0,len(percentiles_to_find)):
