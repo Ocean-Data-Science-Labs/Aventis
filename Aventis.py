@@ -676,6 +676,7 @@ Public License instead of this License.  But first, please read
 """
 
 from cmath import nan
+from warnings import catch_warnings
 import pandas as pd
 import numpy as np
 import time
@@ -689,6 +690,7 @@ import os
 import sys
 from itertools import compress
 from numba import jit
+from regex import W
 
 
 #from matplotlib.pyplot import figure
@@ -702,10 +704,12 @@ def f_split_input_sheet():
     use these later to load up relevent parts of sheet"""
     split_dict = {}
     filepath = askopenfilename()
+
     df = pd.read_excel(filepath, sheet_name="Simulation")
-
+    df.drop(columns=df.columns[0], axis=1, inplace=True)
+    
     wbs_start = df[df["Aventis"] == "Workflow"].index.values[0]+2
-
+    
     #Find end weather
     i = 3
     while pd.isnull(df["Aventis"][wbs_start-i]):
@@ -776,7 +780,6 @@ def f_insert_fragnet_2(unwrapped_fragnet_dict, wbs_aux, index, val):
     #frag_ind = frag_ind[0]
 
     num_cycles = int(wbs_aux["Cycles"][index])
-
     #create inds that will be used to insert the fragnet activity
     #between the activities
     # inds = np.linspace(index+0.01, index+1,
@@ -802,14 +805,10 @@ def f_one_wbs_sweep(wbs, wbs_aux, unwrapped_fragnet_dict, fragnet_names):
         #print(fragnet_names)
         #print(fragnet_names.str.contains(val))
     #if the activty is a fragnet, then seed in the fragnet
-
-
-        if any(fragnet_names.str.contains(val)):
-            
+        if any(fragnet_names.str.contains(val)):   
             frags_df = f_insert_fragnet_2(unwrapped_fragnet_dict, wbs_aux,
                                         index, val)
-
-            # list append convert to numpy array np.asarray(wbs)
+           # list append convert to numpy array np.asarray(wbs)
             wbs = wbs.append(frags_df)
             #wbs = wbs.reset_index(drop=True)
 
@@ -824,7 +823,6 @@ def f_one_wbs_sweep(wbs, wbs_aux, unwrapped_fragnet_dict, fragnet_names):
 def f_iron_out_multiples_wbs(wbs):
     """find the multiples and add them in as single activities """
     #loop though acitivites that need to be duplicated
-
     #find indexes where there are multiples
     multiples_df = wbs[~wbs["Cycles"].isin([1])]
     #indexes = list(multiples_df.index[:])
@@ -838,16 +836,12 @@ def f_iron_out_multiples_wbs(wbs):
     #this is supposedly much quicker than using dataframe operations like append
     else:
         wbs_dict = wbs.to_dict()
-
-
         for index, val in multiples_df["Cycles"].items():
         #print(index)
             new_index = index
-
             for i in range(0,int(val)):
                 di = 0.5/val
                 #new_index = new_index + di
-
                 for key in wbs_dict:
                     if key == "Cycles":
                         wbs_dict[key][new_index] = 1
@@ -950,9 +944,9 @@ def f_find_timestep(wbs):
         
         
     if error_bool == False:
+        """
         # figure out how to quit!!
-        
-    
+        netdurs_all = unique(netdurs_all)
         for i in range(0, len(netdurs_all)):
 
             after_dec[i] = math.modf(netdurs_all[i])[0]
@@ -979,7 +973,7 @@ def f_find_timestep(wbs):
         if breaker == False:
             timestep = 1
             print("Oh Ohh: we could not find a timestep that worked for the wbs, timestep defaulted to 1 hr")
-
+        """
         #timestep not working too well, so just default to 0.5hr
         timestep = 0.5
         print("actually your timestep is equal to 0.5hrs")
@@ -1053,7 +1047,7 @@ def f_construct_wbs(split_dict):
     df = pd.read_excel(split_dict["Filepath"], sheet_name="Simulation",
                        skiprows=split_dict["First WBS"])
     df = df.fillna("NA")
-
+    df.drop(columns=df.columns[0], axis=1, inplace=True)
     fragnet_inds, fragnet_names = f_find_fragnets_inds(df)
 
     #
@@ -1098,8 +1092,8 @@ def f_construct_wbs(split_dict):
 def f_read_options(split_dict):
     """read options in to dictionaries"""
 
-    df = pd.read_excel(split_dict["Filepath"], sheet_name="Simulation", skiprows = 2, usecols=[0,1])
-
+    df = pd.read_excel(split_dict["Filepath"], sheet_name="Simulation", skiprows = 2, usecols=[1,2])
+    
     #Options- select subset of df and turn in to dictionary, delete anything that shouldn't be there
     options_df = df.iloc[ split_dict["First Option"]:split_dict["Last Option"] , : ]
     options = pd.Series(options_df[options_df.columns[1]].values,index=options_df["Simulation Info"]).to_dict()
@@ -1127,15 +1121,24 @@ def f_read_options(split_dict):
 def f_resample_timeseries_and_interp(weather_df, timestep):
     "Resample timeseries in to the desired timestep"
     ts = "".join([str(timestep), "H"])
-
     # Assume datetime_series is continuous and has the same timestep throughout.
-    datetime_series = weather_df.Dates
+
+    # If there is a dates column then move it to index
+    try:
+        datetime_series = weather_df.Dates
+        weather_df_aux = weather_df.set_index(datetime_series)
+        weather_df_new = weather_df_aux.drop('Dates', axis=1)
+
+    # if there isn't a dates column we assume it already is in index
+    except:
+        datetime_series = weather_df.index
+        weather_df_new = pd.DataFrame(weather_df)
+    
     timestep_orig = datetime_series[1] - datetime_series[0]
     timestep_orig_float = timestep_orig.total_seconds()/(60*60)
-    
-    weather_df_aux = weather_df.set_index(datetime_series)
     #if we are upsampling then take the max value, if we are downsampling then interpolate between points
-    weather_df_new = weather_df_aux.resample(ts).max() 
+    weather_df_new = weather_df_new.resample(ts).max() 
+    
     if timestep < timestep_orig_float:
         weather_df_new = weather_df_new.interpolate()
     return weather_df_new
@@ -1148,7 +1151,8 @@ def f_import_weather_csv(filepath, fileID, timestep):
     fileID_data contains the timeseries"""
 
     # Read data from files
-    # ts_info is the timeseries infomation
+    # ts_info is the timeser
+    # ies infomation
     # ie name, lat, lon, source, water depth and comments
     # ts_data is the timeseries
     
@@ -1331,12 +1335,8 @@ def f_derive_bool(params, param_lims, param_tss, num_compare, index_of_pairs):
         for i in range(0, num_lims):
             if i == 0:
                 lower = param_tss[0] > 0
-
-
             else:
                 lower = param_tss[0] > lims[0][i-1]
-
-
             upper = param_tss[0] <= lims[0][i]
             bound = np.vstack([upper, lower])
             bound = bound.all(axis=0)
@@ -1353,11 +1353,8 @@ def f_derive_bool(params, param_lims, param_tss, num_compare, index_of_pairs):
         for i in range(0, num_lims):
             if i == num_lims-1:
                 lower = param_tss[0] > 0
-
             else:
                 lower = param_tss[0] > lims[0][i]
-
-
             upper = param_tss[0] < lims[0][i-1]
             bound = np.vstack([upper, lower])
             bound = bound.all(axis=0)
@@ -1835,9 +1832,6 @@ def f_continuous_activity_bool(wbs, options, window_bool_dict):
 
 
             cont_bool_array = bool_array.all(axis=0)
-
-
-
             window_bool_dict["".join(["C", str(counter)])] = cont_bool_array           
             wbs["Weather Boolean Key"].loc[list_of_acts[0]] = "".join(["C", str(counter)])
 
@@ -1878,9 +1872,7 @@ def f_complete_activity(duration, ts, weather_bool, weather_bool2):
         #find the index of the next workable window then find the 
         #index of the last working timestamp after that
         ts_aux = find_first(1, weather_bool[ts:])
-        
         ntw = np.minimum(find_first(0, weather_bool2[ts+ts_aux:]), duration) 
-
         duration -= ntw
         ts += int(ts_aux + ntw)
         
@@ -1902,7 +1894,6 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
     end_ts = np.zeros(len(wbs))
     #remove_year = False
     ts = int(sim_start_ts)
-
     # find corresponding ts for dates
     linked_activity_counter = 0
 
@@ -1920,7 +1911,6 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
             if dates[ts] < linked_activity_dates[linked_activity_counter]:
                 ts_aux = find_first_after(linked_activity_dates[linked_activity_counter] + sequence["Days Float"][linked_activity_counter], dates[ts:])
                 ts = ts + ts_aux
-            
             linked_activity_counter += 1
 
         # if we find a parallel activity to model then we need to set up a parallel time ts_par
@@ -1974,21 +1964,16 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
                         wbs["Waiting on Parallel Activity [timesteps]"].iloc[i] = end_ts[ind_for_limit_act] - ts
                         ts = int(end_ts[ind_for_limit_act])
                          
-                        # Should Flag Waiting on Parallel Activity!!
-
-                
+                        # Should Flag Waiting on Parallel Activity!! 
             start_ts[i] = ts
-
 
             if wbs["Weather Boolean Key"].loc[i] == -1:
                 ts += int(wbs["Duration [timesteps]"].loc[i])
-
             else:
                 ts = f_complete_activity(wbs["Duration [timesteps]"].loc[i],
                                         ts,
                                         window_bool_dict[wbs["Weather Boolean Key"].loc[i]],
                                         bool_dict[wbs["Boolean Key"].loc[i]])
-
             if ts >= len(dates):
                 print("We ran out of timesteps for ", wbs["Activity"].loc[i])
                 remove_year =  True
@@ -2226,7 +2211,10 @@ def f_create_percentiles(d_dates, percentiles_to_find):
     
     data = list(d_dates.values())
     an_array = np.array(data)
-    percentiles = np.percentile(an_array.astype('float'), percentiles_to_find, axis=0).astype('<M8[ns]')
+    try:
+        percentiles = np.percentile(an_array.astype('float'), percentiles_to_find, axis=0).astype('<M8[ns]')
+    except:
+        print('You may have entered a variable name incorrectly as no activities finished')
     
     return percentiles
 
@@ -2412,7 +2400,7 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
     colour = '#57A4C1' #ODSL 1
     colour2 = '#3B6596' #ODSL 2
     
-    plt.figure(figsize=[15, 15])
+    plt.figure(figsize=[10, 10])
     wdt = np.zeros([len(d_end_ts.keys()), len(wbs)])
 
     key_counter = 0
@@ -2424,7 +2412,6 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
         key_counter = key_counter + 1
 
     wdt_all = np.sum(wdt, axis=0)
-
     wbs["WDT"] = wdt_all 
     wbs["Counter"] = len(d_end_ts.keys())
     activity_wdt = wbs.groupby(["Activity"])["WDT"].sum()/wbs.groupby(["Activity"])["Counter"].sum()
@@ -2436,13 +2423,13 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
               color=colour2,
               fontweight="bold")
     _ = plt.xticks(rotation=90)
-    
+    plt.grid()
     
     plot_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                        "/Activity WDT - " ,
                        options["ID"],
                        ".png"])
-    
+    plt.tight_layout()
     plt.savefig(plot_ID)
     
     return wbs      
