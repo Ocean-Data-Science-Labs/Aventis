@@ -679,6 +679,7 @@ Public License instead of this License.  But first, please read
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import time
 import math
 import pickle
@@ -691,6 +692,8 @@ from numba import jit
 from regex import W
 from cmath import nan
 from warnings import catch_warnings
+from mycolorpy import colorlist as mcp
+
 
 
 #from matplotlib.pyplot import figure
@@ -1658,7 +1661,7 @@ def f_weather_bool(weather, param, ineq, val):
         elif ineq == "=>":
             bool_aux = weather[param] >= val
 
-        elif ineq == "=" or ineq == "==" or ineq == "'=" or ineq == "'==":
+        elif ineq == "=" or ineq == "==":
             bool_aux = weather[param] == val
 
         else:
@@ -1684,6 +1687,7 @@ def f_create_all_bools(wbs, weather):
 
     # Initialise a dict, wbs and a reduced scope wbs (wbs_only_limits) which is how
     # we find the like activities
+    cause_wdt_dict = {} #for finding what caused the WDT
     bool_dict = {}
     window_bool_dict = {}
     window_inds_dict = {}
@@ -1745,17 +1749,18 @@ def f_create_all_bools(wbs, weather):
             # add shift pattern (working hours) boolean at the end.
             if len(indices_val):
                 bool_aux = np.zeros([len(indices_val)+1, len(weather_aux)], dtype=bool) #+1 to add shift pattern
-
+                params = []
                 for j in range(0, len(indices_val)):
 
                     val_aux = conditions[indices_val[j]]
                     ineq_aux = conditions[indices_ineq[j]]
                     param_aux = conditions[indices_param[j]]
-                    
+                    params.append(param_aux)
                     bool_aux[j] = f_weather_bool(weather_aux, param_aux, ineq_aux, val_aux)
 
                 bool_aux[j+1] = np.asarray(weather_aux['Shift Pattern'])
-                
+                cause_wdt_dict[unique_val_ind] = [int(conditions[indices_ww[0]]), params, bool_aux] #save to find out cause of WDT
+
                 if len(indices_val) > 1:
                     bool_aux = bool_aux.all(axis = 0)
                 
@@ -1765,7 +1770,7 @@ def f_create_all_bools(wbs, weather):
 
                 # This key is also added to the wbs in the column "Weather Boolean" of all
                 # like activities for later calling
-
+                
                 bool_dict[unique_val_ind] = np.squeeze(bool_aux)
                 values = bool_dict[unique_val_ind]
                 searchvals = np.ones(int(conditions[indices_ww[0]]))
@@ -1793,7 +1798,7 @@ def f_create_all_bools(wbs, weather):
                 bool_dict[-1] = bool_aux
                 window_bool_dict[-1] = bool_aux
 
-    return wbs, bool_dict, window_bool_dict, window_inds_dict
+    return wbs, bool_dict, window_bool_dict, window_inds_dict, cause_wdt_dict
 
 def f_continuous_activity_bool(wbs, options, window_bool_dict):
     """ check continuous condition and create new booleans careful, 
@@ -2261,7 +2266,7 @@ def write_excel(filename,sheetname,dataframe):
             dataframe.to_excel(writer, sheet_name=sheetname,index=False)
             writer.save()
 
-def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, ID, split_dict, window_inds_dict):
+def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, ID, split_dict,  cause_wdt_dict):
     """ Export percentiles, both per activity and summary in the same excel file"""
     
     p_end_dates = f_create_percentiles(d_end_dates, percentiles_to_find)
@@ -2270,13 +2275,14 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     start_column_names = ["Start P%d" % (i) for i in percentiles_with_p0]
     end_column_names = ["End P%d" % (i) for i in percentiles_with_p0] 
     summary_column_names = ["P%d" % (i) for i in percentiles_with_p0] 
-    summary_row_headings = ['Total Duration [days]', 'Shift Downtime [days]', 'Weather/ Other Downtime [days]']
+    summary_row_headings = ['Total Duration [days]', 'Shift Downtime [days]', 'Weather/ Other Downtime [days]', 'End Date']
     
     df_for_csv = pd.DataFrame(wbs["Location"])
     df_for_csv["AC"] = wbs["Activity"]
     df_summary = pd.DataFrame({'Downtime Type': summary_row_headings})
     summary_stats = np.round(((p_end_dates[:,-1] 
                      -  p_start_dates[:,0]).astype('float')/86400000000000),1)
+    end_dates = (p_end_dates[:,-1] -  p_start_dates[:,0]) + d_start_dates[list(d_start_dates.keys())[0]][0] 
     if options['24 Hour'] == 'Yes':
         shift_duration_pd = 1
         shift_downtime = summary_stats - summary_stats
@@ -2288,14 +2294,17 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
         shift_downtime = np.floor(summary_stats) * (1-shift_duration_pd)
     P0_duration = np.round(wbs["Duration [timesteps]"].sum()/24*timestep,1)
     weather_downtime = summary_stats - shift_downtime - P0_duration
-    
     #P0 stuff
     summary_stats = np.insert(summary_stats, 0, P0_duration)
     shift_downtime = np.insert(shift_downtime, 0, P0_duration * (1-shift_duration_pd))
     weather_downtime = np.insert(weather_downtime,0,0)
+    end_dates = np.insert(end_dates, 0, datetime.timedelta(days=P0_duration) + d_start_dates[list(d_start_dates.keys())[0]][0] )
+    #prepare for export to csv
     summary = np.round(np.vstack((summary_stats, shift_downtime, weather_downtime)),1)
     df_summary_aux = pd.DataFrame(summary)
     df_summary_aux.columns = summary_column_names
+    df_summary_aux.loc[len(df_summary)] = end_dates
+    df_summary_aux.index=range(len(df_summary_aux))
     df_summary = pd.concat((df_summary, df_summary_aux), axis=1)
 
     #Activty Percentile Stats
@@ -2318,8 +2327,74 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     
     out_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                       "/Output - ",
-                      options["ID"],
+                      ID,
                       ".xlsx" ])
+
+    ##find cause of wdt
+    param_cols = [col for col in wbs.columns if 'Parameter' in col]
+    unique_weather_params = list(pd.unique(wbs[param_cols].values.ravel('K')))
+    unique_weather_params.remove('NA')
+    df_cause_wdt = wbs[['Activity', 'Weather Boolean Key', 'Data utilised']]
+    for col in unique_weather_params:
+        df_cause_wdt[col] = np.zeros(len(wbs['Activity']))
+    
+    df_cause_wdt.index = range(0,len(df_cause_wdt))
+    for year in d_start_dates.keys():
+        for ind, row in df_cause_wdt.iterrows():
+            if row['Weather Boolean Key'] > -1:
+                act_start_ind = d_start_ts[year][ind]
+                act_end_ind = d_end_ts[year][ind]
+                # loop through the different limits and count the number of exceedances between the start and end of the activity. 
+                # Add that to df_cause_wdt
+                # e.g if Install Pile has limits Hs < 2.0m and Tp < 12s and was completed between ind 1820 and 1860
+                # sum the number of times Hs was above 2.0 and add it to df_cause_wdt['Activity == 'Install Pile][col == 'Hs']
+                for i in range(len(cause_wdt_dict[row['Weather Boolean Key']][1])):
+                    param = cause_wdt_dict[row['Weather Boolean Key']][1][i]
+                    num_exceedance = np.sum(~cause_wdt_dict[row['Weather Boolean Key']][2][i][act_start_ind:act_end_ind])
+                    df_cause_wdt[param].loc[ind] = df_cause_wdt[param].loc[ind] + num_exceedance
+        
+    print()
+    # Data to plot
+    labels = []
+    sizes = []
+
+    for param in unique_weather_params:
+        labels.append(param)
+        sizes.append(df_cause_wdt[param].sum())
+    
+    # Plot
+    colour2 = '#0393A5' #ODSL 2
+    plt.pie(sizes, labels=labels, autopct='%1.1f%%')
+    plt.title("Overall cause of WDT",
+            fontsize=16, 
+            color=colour2,
+            fontweight="bold",
+            style='italic')
+
+    cause_plot_ID = "".join([os.path.dirname(split_dict["Filepath"]),
+                    "/Cause WDT - " ,
+                    options["ID"],
+                    ".png"])
+    
+    plt.tight_layout()
+    plt.savefig(cause_plot_ID)
+
+    #mould df_cause_wdt in to CSVable df
+    df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()
+    plot = df_cause_wdt_for_csv.plot(kind='bar', stacked=True, ylabel='Number of WDT exceedaces', figsize=[10,10])
+    plot.grid()
+    plt.title("Number of weather events for each activity",
+            fontsize=16, 
+            color=colour2,
+            fontweight="bold",
+            style='italic')
+    plt.tight_layout()
+    activity_cause_ID = "".join([os.path.dirname(split_dict["Filepath"]),
+                    "/Activity Cause WDT - " ,
+                    options["ID"],
+                    ".png"])
+    plt.savefig(activity_cause_ID)
+    
 
     #Calculate monthly persistences/ workabilities
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -2333,52 +2408,92 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
             df_persistence = pd.DataFrame(bools)
             df_persistence.index = datetimes
             #df_persistence.drop(columns=['datetimes'],inplace=True)
-            persistence = np.asarray(df_persistence.groupby(df_persistence.index.month).mean()*100)
+            persistence = np.round(np.asarray(df_persistence.groupby(df_persistence.index.month).mean()),3)
             df_persistences[activity] = persistence
     
+
+    df_info =  create_df_info(options)
+
     # Save to excel
     writer = pd.ExcelWriter(out_ID, engine='xlsxwriter')
     workbook=writer.book
-    
-    worksheet=workbook.add_worksheet('Persistence')
     title_format = workbook.add_format({"font_name": "Helvetica", "font_size": 24, "font_color": "#0393A5", "italic": True, "bold": True, "bg_color": "#FFFFFF" })
+    percent_format = workbook.add_format({'num_format': '0%'})
     #base_format = workbook.add_format({"font_name": "Helvetica", "font_size": 12, "font_color": "#0393A5", "bg_color": "#FFFFFF"})
     #table_format = workbook.add_format({"font_name": "Helvetica", "font_size": 12, "font_color": "#0393A5", "bg_color": "#FFFFFF", "border_color": "#0393A5", "border":5})
-    writer.sheets['Persistence'] = worksheet
-    
+    #Add summary worksheet
+    worksheet0=workbook.add_worksheet('Summary')
+    writer.sheets['Summary'] = worksheet0
+    worksheet0.write_string(0, 1, 'Summary of downtimes',title_format)
+    df_info.to_excel(writer, sheet_name='Summary', startrow=2, startcol=1, index=False)
+    df_summary.to_excel(writer, sheet_name='Summary', startrow=len(df_info)+4, startcol=1, index=False)
+    #Add workability worksheet
+    worksheet=workbook.add_worksheet('Workability')
+    writer.sheets['Workability'] = worksheet
     worksheet.write_string(0, 1, 'Workability of activities',title_format)
-    df_persistences.to_excel(writer, sheet_name='Persistence', startrow=2, startcol=1, index=False)
+    df_persistences.to_excel(writer, sheet_name='Workability', startrow=2, startcol=1, index=False)
+    worksheet.set_column(2, len(df_persistences.columns), None, percent_format)
     mean_plot_ID = f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
     worksheet.insert_image('B17', mean_plot_ID)
-
-    worksheet2=workbook.add_worksheet('Summary')
-    writer.sheets['Summary'] = worksheet2
-    worksheet2.write_string(0, 1, 'Summary of downtimes',title_format)
-    df_summary.to_excel(writer, sheet_name='Summary', startrow=2, startcol=1, index=False)
-
-
+    #Add cause wdt worksheet
+    worksheet2=workbook.add_worksheet('Cause of WDT')
+    writer.sheets['Cause of WDT'] = worksheet2
+    worksheet2.write_string(0, 1, 'Weather parameters that caused WDT',title_format)
+    df_cause_wdt_for_csv.to_excel(writer, sheet_name='Cause of WDT', startrow=2, startcol=1)   
+    worksheet2.insert_image(2, len(df_cause_wdt_for_csv.columns)+3, cause_plot_ID)
+    worksheet2.insert_image(28, len(df_cause_wdt_for_csv.columns)+3, activity_cause_ID)
+    
+    #Add Completion dates worksheet
     worksheet3=workbook.add_worksheet('Activity Completion Dates')
     writer.sheets['Activity Completion Dates'] = worksheet3
     worksheet3.write_string(0, 1, 'Percentile start and end datetimes for each activity',title_format)
     df_for_csv.to_excel(writer, sheet_name='Activity Completion Dates', startrow=2, startcol=1, index=False)   
     percentile_plume_ID = f_percentile_plumes(p_end_dates, percentiles_to_find, wbs, options, split_dict)
     worksheet3.insert_image('AB3', percentile_plume_ID)
+
+
     writer.save()
-
-    
-
 
     return df_for_csv, p_end_dates, p_start_dates, df_summary
     
+def create_df_info(options):
+        # create df_info
+    values = [options['ID'],
+              options['Simulation Type (Set Start/ Set End/ Date Range)'],
+              options['Input Date']]
+    labels = ['Simulation ID', 'Simulation Type', 'Start Date']
     
+    if options['Simulation Type (Set Start/ Set End/ Date Range)'] == 'Date Range':
+        labels.remove('Start Date')
+        labels.append('First Start Date')
+        labels.append('Last Start Date')
+        values.append(options['Input Date 2 (Only needed for Date Range)'])
+    if options['24 Hour'] == 'Yes':
+        labels.append('Work Shift')
+        values.append('24 Hours')
+    else:
+        labels.append('Start Shift')
+        values.append(options['Shift Start [HH:MM]'])
+        labels.append('End Shift')
+        values.append(options['End Start [HH:MM]'])
+        labels.append('Transit Duration from Port')
+        values.append(options['Transit Duration [HH:MM]'])
+    if options['Linked Simulation (Yes/ No)'] == 'Yes':
+        labels.append('Linked Simulation')
+        values.append('No')
+    else:
+        labels.append('Linked Simulation')
+        values.append(options['Previous Simulation or Set Dates'])
 
+    df_info = pd.DataFrame({'Options': labels, ' ':values})
+    
+    return  df_info
 
 def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     """ 
     Plot out percentile plumes (either by location of % completion)
     
     """
-    
     #sequential_colors = sns.color_palette("PuBu",11)
     colour = '#57A4C1' #ODSL 1
     colour2 = '#0393A5' #ODSL 2
@@ -2567,29 +2682,26 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
     figure = plt.figure(figsize=[20, 8])
     #sequential_colors = sns.color_palette("PuBu",11)
     colour = '#57A4C1' #ODSL 1
-    colour2 = '#3B6596' #ODSL 2
+    colour2 = '#0393A5' #ODSL 2
     counter = 0
+    colormap = mcp.gen_color(cmap="viridis",n=len(df_summary.columns))
     for col in reversed(df_summary.columns):
 
-
-
-        
         plt.fill_between(x=np.squeeze(list(df_summary[col].index)),
                          y1=list(df_summary[col].values),
-                         color=colour,
-                         alpha=0.5+counter*0.05,
+                         color=colormap[counter],
+                         alpha=0.7,
                          label=col)
 
         if counter == 0:
             plt.xlim(0, max(df_summary[col].values)+15)
 
-
         counter = counter+1
 
     plt.legend(loc='best')
     plt.xlim([min(df_summary.index), max(df_summary.index)])
-    plt.xticks(fontsize=16)
-    plt.yticks(fontsize=16)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
     plt.ylabel("Campaign Duration [Days]",fontsize=16)
     plt.xlabel("Start Date", fontsize=16)
     plt.title("Start Date Sensitivity",               
@@ -2597,8 +2709,7 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
               color=colour2,
               fontweight="bold",
               style='italic')
-    
-
+    plt.grid()
     
     sds_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/SDS Plume -",
@@ -2606,6 +2717,8 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
                                    ".png"])
     
     plt.savefig(sds_plume_ID)
+
+    return sds_plume_ID
 
 # Running Script #########################################################
 # Apply the default theme
@@ -2646,7 +2759,7 @@ if __name__ == '__main__':
         print("----------------------------------------------------------------------")
         print("Weather Booleans: Started")
         tic = time.time()
-        wbs, bool_dict, window_bool_dict, window_inds_dict = f_create_all_bools(wbs, weather)
+        wbs, bool_dict, window_bool_dict, window_inds_dict, cause_wdt_dict = f_create_all_bools(wbs, weather)
         if any(wbs["Continuous"] == "Yes"):
             wbs, window_bool_dict = f_continuous_activity_bool(wbs, options, window_bool_dict)
         toc = time.time()
@@ -2695,7 +2808,7 @@ if __name__ == '__main__':
                                                                                           wbs, 
                                                                                           options["ID"],
                                                                                           split_dict,
-                                                                                          window_inds_dict)
+                                                                                          cause_wdt_dict)
                 toc = time.time()
                 print("Complete in", toc - tic, "s")
 
@@ -2783,13 +2896,25 @@ if __name__ == '__main__':
                                                                                     df_summary,
                                                                                     start_date)
                     end_percentiles_dict[str(start_date)] = df_p_end_dates
-
-            out_ID = "".join([os.path.dirname(split_dict["Filepath"]),
-                      "/SDS Output - ",
-                      options["ID"],
-                      ".xlsx" ])
-
-            df_summary.to_excel(out_ID, sheet_name="Date Range")
+                    if start_date == start_dates[-1]:
+                        df_info =  create_df_info(options)
+                        sds_plot_id = f_plot_start_date_sensitivty_plume(df_summary, split_dict)
+                        # Save to excel
+                        out_ID = "".join([os.path.dirname(split_dict["Filepath"]),
+                                "/SDS Output - ",
+                                options["ID"],
+                                ".xlsx" ])
+                        writer = pd.ExcelWriter(out_ID, engine='xlsxwriter')
+                        workbook=writer.book
+                        title_format = workbook.add_format({"font_name": "Helvetica", "font_size": 24, "font_color": "#0393A5", "italic": True, "bold": True, "bg_color": "#FFFFFF" })
+                        #Add summary worksheet
+                        worksheet0=workbook.add_worksheet('Summary')
+                        writer.sheets['Summary'] = worksheet0
+                        worksheet0.write_string(0, 1, 'Summary of Simulations',title_format)
+                        df_info.to_excel(writer, sheet_name='Summary', startrow=2, startcol=1, index=False)
+                        df_summary.to_excel(writer, sheet_name='Summary', startrow=len(df_info)+4, startcol=1, index=False)
+                        worksheet0.insert_image('M3', sds_plot_id)
+                        writer.save()
 
             if options["Plot Plume"] == "Yes":
                 f_plot_start_date_sensitivty_plume(df_summary, split_dict)
