@@ -2380,7 +2380,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     plt.savefig(cause_plot_ID)
 
     #mould df_cause_wdt in to CSVable df
-    df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()
+    df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()/len(d_start_dates.keys())
     plot = df_cause_wdt_for_csv.plot(kind='bar', stacked=True, ylabel='Number of WDT exceedaces', figsize=[10,10])
     plot.grid()
     plt.title("Number of weather events for each activity",
@@ -2451,6 +2451,9 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     percentile_plume_ID = f_percentile_plumes(p_end_dates, percentiles_to_find, wbs, options, split_dict)
     worksheet3.insert_image('AB3', percentile_plume_ID)
 
+    programme_plume_ID = f_compare_with_programme(p_end_dates, percentiles_to_find, wbs, options, split_dict)
+    worksheet3.insert_image('AR3', programme_plume_ID)
+
 
     writer.save()
 
@@ -2489,6 +2492,114 @@ def create_df_info(options):
     
     return  df_info
 
+def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict):
+    """ 
+    Plot out percentile plumes (either by location of % completion)
+    
+    """
+    #sequential_colors = sns.color_palette("PuBu",11)
+    colour = '#57A4C1' #ODSL 1
+    colour2 = '#0393A5' #ODSL 2
+    plt.figure(figsize=[10, 10])
+    ID = options["ID"]
+    labels = wbs["Location"][wbs["Activity"] == options["Activity that Marks End of Location"]]
+    ticks = labels.index
+    yvals = np.linspace(0, 100, len(ticks)+1)
+    marked_act_inds = list(labels.index)
+    marked_act_inds.insert(0,0)
+
+    # if we have a working sequence then plot it with a sequence, if not then plot as % completion
+    
+    if any(labels == "Undefined") or any(labels == "Port"):
+        marked_act_inds = list(labels.index)
+        marked_act_inds.insert(0,0)
+        labels = np.arange(1, len(ticks)+1)
+        
+
+        plt.fill_betweenx(yvals, 
+                            p_end_dates[1,marked_act_inds], 
+                            p_end_dates[7,marked_act_inds],  
+                            color=colour, 
+                            alpha= 0.8,
+                            label="P20 - P80")
+
+        plt.plot(p_end_dates[4,marked_act_inds],
+                 yvals, 
+                 color=colour2, 
+                 linestyle='-', 
+                 linewidth=2,
+                 label="P50")
+        
+        timedeltas = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h')
+        plt.plot(p_end_dates[0,0] + timedeltas[marked_act_inds],
+            yvals, 
+            color='black', 
+            linestyle='-', 
+            linewidth=2,
+            label="P0")
+
+        plt.ylabel("Campaign Completion [%]")
+        
+        df_milestones = pd.read_excel(split_dict['Filepath'],sheet_name="Programme", skiprows=3)
+        df_milestones_cols = list(df_milestones.columns)
+        num_programmes = int(len(df_milestones_cols)/2)
+
+        for i in np.arange(0,len(df_milestones_cols),2):
+            plt.plot(df_milestones[df_milestones_cols[i+1]],
+            df_milestones[df_milestones_cols[i]],
+            label=df_milestones_cols[i],
+            linewidth=2,
+            linestyle='--')
+
+    """    
+    else:
+
+        plt.fill_betweenx(yvals,
+                            p_end_dates[1,marked_act_inds],
+                            p_end_dates[7,marked_act_inds],
+                            color=colour,
+                            alpha= 0.8,
+                            label="P80 - P20")
+
+
+        plt.plot(p_end_dates[4,marked_act_inds],
+                 yvals,
+                 color=colour2,
+                 linestyle='-',
+                 linewidth=1,
+                 label="P50")
+
+    
+        plt.ylabel("Location", fontsize=14)
+        plt.yticks(ticks, labels)
+        plt.xticks(fontsize=14)
+        plt.yticks(fontsize=14)
+    """   
+    
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.title("".join(["Programme Comparison of ",
+                       ID,
+                       " - ",
+                       options["Activity that Marks End of Location"],
+                       "\n",
+                       str(len(labels)),
+                       " locations"]),
+              fontsize=16, 
+              color=colour2,
+              fontweight="bold",
+              style='italic')
+    plt.grid()
+    plt.ylim([0,100])
+    programe_comparison_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
+                                   "/Programme Comparison -",
+                                   ID,
+                                   ".png"])
+    
+    plt.savefig(programe_comparison_plume_ID)
+
+    return programe_comparison_plume_ID
+
 def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     """ 
     Plot out percentile plumes (either by location of % completion)
@@ -2501,12 +2612,14 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     ID = options["ID"]
     labels = wbs["Location"][wbs["Activity"] == options["Activity that Marks End of Location"]]
     ticks = labels.index
-    yvals = np.linspace(0, 100, len(ticks))
+    yvals = np.linspace(0, 100, len(ticks)+1)
     marked_act_inds = list(labels.index)
+    marked_act_inds.insert(0,0)
     # if we have a working sequence then plot it with a sequence, if not then plot as % completion
     
     if any(labels == "Undefined") or any(labels == "Port"):
         marked_act_inds = list(labels.index)
+        marked_act_inds.insert(0,0)
         labels = np.arange(1, len(ticks)+1)
         
         for i in range(0,3):
@@ -2588,7 +2701,7 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
                        ID,
                        " - ",
                        options["Activity that Marks End of Location"],
-                       ": ",
+                       "\n",
                        str(len(labels)),
                        " locations"]),
               fontsize=16, 
@@ -2837,6 +2950,9 @@ if __name__ == '__main__':
 
             if options["Activity WDT"] == "Yes":
                 f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
+            
+            if options["Compare with Programme"] == "Yes":
+                f_compare_with_programme(p_end_dates, percentiles_to_find, wbs, options, split_dict)
 
         toc = time.time()
         print("")
