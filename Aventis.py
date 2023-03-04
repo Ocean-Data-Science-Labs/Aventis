@@ -693,6 +693,7 @@ from regex import W
 from cmath import nan
 from warnings import catch_warnings
 from mycolorpy import colorlist as mcp
+import seaborn as sns
 
 
 
@@ -2311,17 +2312,34 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     for i in range(0,len(percentiles_with_p0)):
         if i == 0:
             P0_activity_durations = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h')
+            
+            # If there is a shift pattern we need to add the amount of time spent offshift during P0 to the P0 programme
+            if options['24 Hour'] == 'No':
+                shift_duration = pd.to_timedelta(options['Shift End [HH:MM]'].hour - options['Shift Start [HH:MM]'].hour -  
+                                                 (2 * (options['Transit Duration [HH:MM]'].hour*60 + options['Transit Duration [HH:MM]'].minute)/60), unit='h')
+                offshift_duration = pd.to_timedelta(24, unit='h') - shift_duration
+                num_whole_shifts_in_timedeltas = [np.floor(timedelta/shift_duration) for timedelta in P0_activity_durations]
+                total_off_shifts = [num_whole_shifts_in_timedelta * offshift_duration for num_whole_shifts_in_timedelta in num_whole_shifts_in_timedeltas]
+                P0_durations = list()
+                for total_off_shift, timedelta in zip(total_off_shifts, P0_activity_durations):
+                    P0_durations.append(timedelta + total_off_shift)
+            else:
+                P0_durations = P0_activity_durations
+
+            #manipulate so P0_start_dates is one step behind with an extra 0 duration at the beginning
             padding = pd.to_timedelta(0, unit='D')
-            P0_activity_durations[1:-1] = P0_activity_durations[0:-2]
-            P0_activity_durations[0] = padding
-            df_for_csv[start_column_names[i]] = P0_activity_durations + d_start_dates[list(d_start_dates.keys())[0]][0]
+            P0_start_durations = P0_durations[0:-1]
+            P0_start_durations.insert(0,padding)
+            P0_start_dates = [P0_start_duration + d_start_dates[list(d_start_dates.keys())[0]][0] for P0_start_duration in P0_start_durations]
+            P0_end_dates = [P0_duration + d_start_dates[list(d_start_dates.keys())[0]][0] for P0_duration in P0_durations]
+            df_for_csv[start_column_names[i]] = P0_start_dates
         else:
             df_for_csv[start_column_names[i]] = p_start_dates[i-1,:] 
 
     df_for_csv[" "] = ["" for i in range(len(wbs))]
     for i in range(0,len(percentiles_with_p0)):
         if i == 0:
-                df_for_csv[end_column_names[i]] = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h') + d_start_dates[list(d_start_dates.keys())[0]][0]
+                df_for_csv[end_column_names[i]] = P0_end_dates
         else:
             df_for_csv[end_column_names[i]] = p_end_dates[i-1,:] 
     
@@ -2365,11 +2383,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     # Plot
     colour2 = '#0393A5' #ODSL 2
     plt.pie(sizes, labels=labels, autopct='%1.1f%%')
-    plt.title("Overall cause of WDT",
-            fontsize=16, 
-            color=colour2,
-            fontweight="bold",
-            style='italic')
+    plt.title("Overall cause of WDT")
 
     cause_plot_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                     "/Cause WDT - " ,
@@ -2381,13 +2395,10 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
 
     #mould df_cause_wdt in to CSVable df
     df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()/len(d_start_dates.keys())
-    plot = df_cause_wdt_for_csv.plot(kind='bar', stacked=True, ylabel='Number of WDT exceedaces', figsize=[10,10])
-    plot.grid()
-    plt.title("Number of weather events for each activity",
-            fontsize=16, 
-            color=colour2,
-            fontweight="bold",
-            style='italic')
+    plot = df_cause_wdt_for_csv.plot(kind='bar', stacked=True, ylabel='Number of weather limit exceedaces', figsize=[10,10])
+    plot.grid(True)
+    plt.title("Average number of weather events for each activity"
+            )
     plt.tight_layout()
     activity_cause_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                     "/Activity Cause WDT - " ,
@@ -2447,12 +2458,11 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     worksheet3=workbook.add_worksheet('Activity Completion Dates')
     writer.sheets['Activity Completion Dates'] = worksheet3
     worksheet3.write_string(0, 1, 'Percentile start and end datetimes for each activity',title_format)
-    df_for_csv.to_excel(writer, sheet_name='Activity Completion Dates', startrow=2, startcol=1, index=False)   
+    df_for_csv.to_excel(writer, sheet_name='Activity Completion Dates', startrow=52, startcol=1, index=False)   
     percentile_plume_ID = f_percentile_plumes(p_end_dates, percentiles_to_find, wbs, options, split_dict)
-    worksheet3.insert_image('AB3', percentile_plume_ID)
-
+    worksheet3.insert_image('B3', percentile_plume_ID)
     programme_plume_ID = f_compare_with_programme(p_end_dates, percentiles_to_find, wbs, options, split_dict)
-    worksheet3.insert_image('AR3', programme_plume_ID)
+    worksheet3.insert_image('Q3', programme_plume_ID)
 
 
     writer.save()
@@ -2478,7 +2488,7 @@ def create_df_info(options):
         labels.append('Start Shift')
         values.append(options['Shift Start [HH:MM]'])
         labels.append('End Shift')
-        values.append(options['End Start [HH:MM]'])
+        values.append(options['Shift End [HH:MM]'])
         labels.append('Transit Duration from Port')
         values.append(options['Transit Duration [HH:MM]'])
     if options['Linked Simulation (Yes/ No)'] == 'Yes':
@@ -2531,7 +2541,22 @@ def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict)
                  label="P50")
         
         timedeltas = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h')
-        plt.plot(p_end_dates[0,0] + timedeltas[marked_act_inds],
+
+        # If there is a shift pattern we need to add the amount of time spent offshift during P0 to the P0 programme
+        if options['24 Hour'] == 'No':
+            shift_duration = pd.to_timedelta(options['Shift End [HH:MM]'].hour - options['Shift Start [HH:MM]'].hour -  
+                                             (2 * (options['Transit Duration [HH:MM]'].hour*60 + options['Transit Duration [HH:MM]'].minute)/60), unit='h')
+            offshift_duration = pd.to_timedelta(24, unit='h') - shift_duration
+            num_whole_shifts_in_timedeltas = [np.floor(timedelta/shift_duration) for timedelta in timedeltas]
+            total_off_shifts = [num_whole_shifts_in_timedelta * offshift_duration for num_whole_shifts_in_timedelta in num_whole_shifts_in_timedeltas]
+            P0_durations = list()
+            for total_off_shift, timedelta in zip(total_off_shifts, timedeltas):
+                P0_durations.append(timedelta + total_off_shift)
+        else:
+            P0_durations = timedeltas
+
+        P0_end_dates = [P0_durations[ind] + p_end_dates[0,0] for ind in marked_act_inds]
+        plt.plot(P0_end_dates,
             yvals, 
             color='black', 
             linestyle='-', 
@@ -2578,19 +2603,27 @@ def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict)
     
     plt.legend()
     plt.xticks(rotation=45)
-    plt.title("".join(["Programme Comparison of ",
+    plt.title("".join(["Programme comparison of ",
                        ID,
-                       " - ",
+                       "\n",
                        options["Activity that Marks End of Location"],
                        "\n",
                        str(len(labels)),
-                       " locations"]),
-              fontsize=16, 
-              color=colour2,
-              fontweight="bold",
-              style='italic')
-    plt.grid()
+                       " locations"]))
+    plt.grid(True)
     plt.ylim([0,100])
+    x_range_min = p_end_dates[0,0] #- pd.to_timedelta(7, unit='d')
+    x_range_max = p_end_dates[-2,-1] #+ pd.to_timedelta(7, unit='d')
+    x_range = (x_range_max - x_range_min).astype('timedelta64[D]').astype(float)
+    if x_range/10 < 1:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(1, unit='d'), x_range_max + pd.to_timedelta(1, unit='d'), freq='D'))
+    elif x_range/7 < 10:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(3, unit='d'), x_range_max + pd.to_timedelta(3, unit='d'), freq='W'))
+    elif x_range/30 < 10:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='MS'))
+    else:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='QS'))
+        
     programe_comparison_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/Programme Comparison -",
                                    ID,
@@ -2644,16 +2677,17 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
                  color=colour2,
                  linestyle='-.',
                  linewidth=2,
-                 label="P20")
+                 label="P10")
         
         plt.plot(p_end_dates[8,marked_act_inds],
                  yvals,
                  color=colour2,
                  linestyle='--',
                  linewidth=2,
-                 label="P80")
+                 label="P90")
     
         plt.ylabel("Campaign Completion [%]")
+        plt.ylim([0, 100])
         
         
         
@@ -2694,21 +2728,28 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
         plt.xticks(fontsize=14)
         plt.yticks(fontsize=14)
         
-    
+    x_range_min = p_end_dates[0,0] #- pd.to_timedelta(7, unit='d')
+    x_range_max = p_end_dates[-2,-1] #+ pd.to_timedelta(7, unit='d')
+    x_range = (x_range_max - x_range_min).astype('timedelta64[D]').astype(float)
+    if x_range/10 < 1:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(1, unit='d'), x_range_max + pd.to_timedelta(1, unit='d'), freq='D'))
+    elif x_range/7 < 10:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(3, unit='d'), x_range_max + pd.to_timedelta(3, unit='d'), freq='W'))
+    elif x_range/30 < 10:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='MS'))
+    else:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='QS'))
+
     plt.legend()
     plt.xticks(rotation=45)
-    plt.title("".join(["Percentile Plume of ",
+    plt.title("".join(["Percentile plume of ",
                        ID,
-                       " - ",
+                       "\n",
                        options["Activity that Marks End of Location"],
                        "\n",
                        str(len(labels)),
-                       " locations"]),
-              fontsize=16, 
-              color=colour2,
-              fontweight="bold",
-              style='italic')
-    plt.grid()
+                       " locations"]),)
+    plt.grid(True)
     percentile_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/Percentile Plume -",
                                    ID,
@@ -2744,13 +2785,9 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
     activity_wdt = activity_wdt.sort_values(ascending=False)
     plt.bar(activity_wdt.index,activity_wdt*timestep, color=colour)
     plt.ylabel("Mean WDT [hrs]", fontsize=16)
-    plt.title("".join(["WDT by Activity for ", options["ID"]]),              
-              fontsize=16, 
-              color=colour2,
-              fontweight="bold",
-              style="italic")
+    plt.title("".join(["WDT by Activity for ", options["ID"]]))
     _ = plt.xticks(rotation=90)
-    plt.grid()
+    plt.grid(True)
     plt.xticks(fontsize=14)
     plt.yticks(fontsize=14)
     
@@ -2817,12 +2854,8 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
     plt.yticks(fontsize=14)
     plt.ylabel("Campaign Duration [Days]",fontsize=16)
     plt.xlabel("Start Date", fontsize=16)
-    plt.title("Start Date Sensitivity",               
-              fontsize=16, 
-              color=colour2,
-              fontweight="bold",
-              style='italic')
-    plt.grid()
+    plt.title("Start Date Sensitivity")
+    plt.grid(True)
     
     sds_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/SDS Plume -",
@@ -2845,7 +2878,10 @@ if __name__ == '__main__':
     tic = time.time()
     wbs, timestep, weather_IDs, error_bool = f_construct_wbs(split_dict)
     toc = time.time()
-    
+    plt.style.use('ggplot')
+    colour_pallete = ['#329464', '#D9C752', '#38A4C0', '#D19738', '#4162C4' ]
+    sns.set_palette(sns.color_palette(colour_pallete))
+                      
     if error_bool == False:
         
         print("Constructing WBS: Complete in", toc - tic, "s")
