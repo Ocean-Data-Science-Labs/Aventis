@@ -1689,6 +1689,7 @@ def f_create_all_bools(wbs, weather):
     # Initialise a dict, wbs and a reduced scope wbs (wbs_only_limits) which is how
     # we find the like activities
     cause_wdt_dict = {} #for finding what caused the WDT
+    
     bool_dict = {}
     window_bool_dict = {}
     window_inds_dict = {}
@@ -1798,6 +1799,8 @@ def f_create_all_bools(wbs, weather):
                 bool_aux = np.ones([len(indices_val), len(weather_aux)], dtype=bool)
                 bool_dict[-1] = bool_aux
                 window_bool_dict[-1] = bool_aux
+
+        cause_wdt_dict["Linked"] = bool_aux = np.zeros([1, len(weather_aux)], dtype=bool)
 
     return wbs, bool_dict, window_bool_dict, window_inds_dict, cause_wdt_dict
 
@@ -1917,7 +1920,7 @@ def f_complete_activity(duration, ts, weather_bool, weather_bool2):
         
     return ts
 
-def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_dict, linked_activity_dates, sequence,  current_linked_activity_inds):
+def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_dict, linked_activity_dates, sequence,  current_linked_activity_inds, cause_wdt_dict):
     """Jump from window to window, until everything is installed in a year
     input:
     - wbs pandas dataframe with work breakdown structure- activities with durations, weather windows and their limits
@@ -1948,6 +1951,7 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
             
             if dates[ts] < linked_activity_dates[linked_activity_counter]:
                 ts_aux = find_first_after(linked_activity_dates[linked_activity_counter] + sequence["Days Float"][linked_activity_counter], dates[ts:])
+                cause_wdt_dict["Linked"][0][ts:ts+ts_aux] = True
                 ts = ts + ts_aux
             linked_activity_counter += 1
 
@@ -2024,7 +2028,7 @@ def simulate_year_conditioned(wbs, window_bool_dict, sim_start_ts, dates, bool_d
     start_dates = dates[start_ts]
     end_dates = dates[end_ts]
 
-    return start_ts, end_ts, start_dates, end_dates, remove_year
+    return start_ts, end_ts, start_dates, end_dates, remove_year, cause_wdt_dict
 
 def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
     """Jump from window to window, until everything is installed in a year
@@ -2131,7 +2135,7 @@ def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
 
     return start_ts, end_ts, start_dates, end_dates, remove_year
 
-def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence):
+def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence, cause_wdt_dict):
     """Simulate each year"""
     weather_id_dummy = list(weather.keys())[1]
     
@@ -2144,6 +2148,7 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
     d_start_dates = {}
     d_end_dates = {}
     d_end_dates_unchanged = {}
+    d_linked_downtime = {}
 
     if options["Linked Simulation (Yes/ No)"] == "Yes":
         
@@ -2186,13 +2191,12 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
             start_date = options["Input Date"].replace(year=years[i])
             weather_inds = weather[weather_id_dummy].index[weather[weather_id_dummy].index > start_date]
             sim_start_ts = len(dates) - len(weather_inds)
-
             # if the linked simulation is over a year then we have to cut this sim by a year as well- hence this check!
             if years[i] in linked_activity_dates.keys(): 
 
-                start_ts, end_ts, start_dates, end_dates, remove_year = simulate_year_conditioned(wbs, window_bool_dict,
-                                                                                        sim_start_ts, dates,
-                                                                                    bool_dict, linked_activity_dates[years[i]], sequence, current_linked_activity_inds)
+                start_ts, end_ts, start_dates, end_dates, remove_year, cause_wdt_dict = simulate_year_conditioned(wbs, window_bool_dict,
+                                                                                        sim_start_ts, dates, bool_dict, linked_activity_dates[years[i]],
+                                                                                        sequence, current_linked_activity_inds, cause_wdt_dict)
             else:
                 remove_year = True
 
@@ -2206,11 +2210,13 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
 
             #save unaltered for linked simulations
             d_end_dates_unchanged[years[i]] = end_dates
+            d_linked_downtime[years[i]] = np.sum(cause_wdt_dict['Linked'][0][start_ts[0]:end_ts[-1]])
 
             d_start_dates[years[i]] = start_dates - (start_dates[0] - options["Input Date"])
             d_end_dates[years[i]] = end_dates - (start_dates[0] - options["Input Date"])
 
     else:
+        
         for i in range(0,len(years)):
             if options["Simulation Type (Set Start/ Set End/ Date Range)"] == "Set Start":
                 print("Starting Simulation in: ", years[i])
@@ -2237,20 +2243,25 @@ def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linke
 
             #save unaltered for linked simulations
             d_end_dates_unchanged[years[i]] = end_dates
+            d_linked_downtime[years[i]] = 0
+
 
             d_start_dates[years[i]] = start_dates - (start_dates[0] - options["Input Date"])
             d_end_dates[years[i]] = end_dates - (start_dates[0] - options["Input Date"])
 
-    return d_start_ts, d_end_ts, d_start_dates, d_end_dates, d_end_dates_unchanged
+    return d_start_ts, d_end_ts, d_start_dates, d_end_dates, d_end_dates_unchanged, d_linked_downtime, cause_wdt_dict
     
 ## Post Processing
-def f_create_percentiles(d_dates, percentiles_to_find):
+def f_create_percentiles(d_dates, percentiles_to_find, output_type="Date"):
     """ create array of percentiles from an array of dates"""
     
     data = list(d_dates.values())
     an_array = np.array(data)
     try:
-        percentiles = np.percentile(an_array.astype('float'), percentiles_to_find, axis=0).astype('<M8[ns]')
+        if output_type == "Date":
+            percentiles = np.percentile(an_array.astype('float'), percentiles_to_find, axis=0).astype('<M8[ns]')
+        elif output_type == "Float":
+            percentiles = np.percentile(an_array.astype('float'), percentiles_to_find, axis=0)
     except:
         print('You may have entered a variable name incorrectly as no activities finished')
     
@@ -2267,7 +2278,7 @@ def write_excel(filename,sheetname,dataframe):
             dataframe.to_excel(writer, sheet_name=sheetname,index=False)
             writer.save()
 
-def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, ID, split_dict,  cause_wdt_dict):
+def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, ID, split_dict, cause_wdt_dict, d_linked_downtime):
     """ Export percentiles, both per activity and summary in the same excel file"""
     
     p_end_dates = f_create_percentiles(d_end_dates, percentiles_to_find)
@@ -2276,7 +2287,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     start_column_names = ["Start P%d" % (i) for i in percentiles_with_p0]
     end_column_names = ["End P%d" % (i) for i in percentiles_with_p0] 
     summary_column_names = ["P%d" % (i) for i in percentiles_with_p0] 
-    summary_row_headings = ['Total Duration [days]', 'Shift Downtime [days]', 'Weather/ Other Downtime [days]', 'End Date']
+    summary_row_headings = ['Total duration [days]', 'Shift downtime [days]','Weather downtime & Stand by [days]', 'End date']
     
     df_for_csv = pd.DataFrame(wbs["Location"])
     df_for_csv["AC"] = wbs["Activity"]
@@ -2293,21 +2304,26 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
                           - 2 * datetime.timedelta(hours=options['Transit Duration [HH:MM]'].hour, minutes=options['Transit Duration [HH:MM]'].minute))
                           /datetime.timedelta(days=1))
         shift_downtime = np.floor(summary_stats) * (1-shift_duration_pd)
+
+
+    #linked_downtime_ps = f_create_percentiles(d_linked_downtime, percentiles_to_find, output_type="Float")/24*timestep #commented because percentiles are confusing with weather percentiles as well
+
     P0_duration = np.round(wbs["Duration [timesteps]"].sum()/24*timestep,1)
-    weather_downtime = summary_stats - shift_downtime - P0_duration
+    weather_downtime = summary_stats - shift_downtime - P0_duration #- linked_downtime_ps
     #P0 stuff
     summary_stats = np.insert(summary_stats, 0, P0_duration)
     shift_downtime = np.insert(shift_downtime, 0, P0_duration * (1-shift_duration_pd))
     weather_downtime = np.insert(weather_downtime,0,0)
+    #linked_downtime_ps = np.insert(linked_downtime_ps,0,0)
     end_dates = np.insert(end_dates, 0, datetime.timedelta(days=P0_duration) + d_start_dates[list(d_start_dates.keys())[0]][0] )
     #prepare for export to csv
-    summary = np.round(np.vstack((summary_stats, shift_downtime, weather_downtime)),1)
+    summary = np.round(np.vstack((summary_stats, shift_downtime,  weather_downtime)),1) #linked_downtime_ps
     df_summary_aux = pd.DataFrame(summary)
     df_summary_aux.columns = summary_column_names
     df_summary_aux.loc[len(df_summary)] = end_dates
     df_summary_aux.index=range(len(df_summary_aux))
     df_summary = pd.concat((df_summary, df_summary_aux), axis=1)
-
+    shift_duration = pd.Timedelta(24, unit='h')
     #Activty Percentile Stats
     for i in range(0,len(percentiles_with_p0)):
         if i == 0:
@@ -2324,7 +2340,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
                 for total_off_shift, timedelta in zip(total_off_shifts, P0_activity_durations):
                     P0_durations.append(timedelta + total_off_shift)
             else:
-                P0_durations = P0_activity_durations
+                P0_durations = list(P0_activity_durations)
 
             #manipulate so P0_start_dates is one step behind with an extra 0 duration at the beginning
             padding = pd.to_timedelta(0, unit='D')
@@ -2347,6 +2363,33 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
                       "/Output - ",
                       ID,
                       ".xlsx" ])
+    #Stats by year
+    linked_waiting = list()
+    weather_waiting = list()
+    shift_waiting = list()
+    year_durs = list()
+    P0_durations_yearly = list()
+
+    for year in d_linked_downtime.keys():
+        linked_dur = d_linked_downtime[year]
+        linked_waiting.append(pd.Timedelta(linked_dur*timestep, unit='h'))
+        year_dur = d_end_dates[year][-1] - d_start_dates[year][0]
+        year_durs.append(year_dur)
+        P0_durations_yearly.append(pd.Timedelta(P0_duration, unit='D'))
+
+        #final day must finish during a shift, therefore must add first part of day off to shift total duration
+        if options["24 Hour"] == "No":
+            shift_dur = year_dur.days*(pd.Timedelta(24, unit='h')- shift_duration).seconds/60/60/24 - (year_dur.seconds/60/60 - (options["Shift Start [HH:MM]"].hour + options["Shift Start [HH:MM]"].minute/60))/24
+            shift_waiting.append(pd.Timedelta(shift_dur, 'D'))
+        else:
+            shift_dur = 0
+            shift_waiting.append(pd.Timedelta(0, unit='h'))
+        
+        weather_waiting.append(year_dur - pd.Timedelta(linked_dur*timestep, unit='h') - pd.Timedelta(shift_dur, unit='D') - pd.Timedelta(P0_duration, unit='D'))
+
+    df_yearly_stats = pd.DataFrame(np.transpose([list(d_linked_downtime.keys()),P0_durations_yearly, year_durs, shift_waiting, linked_waiting, weather_waiting]))
+    df_yearly_stats.columns = ["Year","P0 duration [days]", "Total duration [days]", "Shift downtime [days]", "Stand by for pre-requisite activity [days]", "Weather Downtime [days]"]
+    
 
     ##find cause of wdt
     param_cols = [col for col in wbs.columns if 'Parameter' in col]
@@ -2355,7 +2398,8 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_cause_wdt = wbs[['Activity', 'Weather Boolean Key', 'Data utilised']]
     for col in unique_weather_params:
         df_cause_wdt[col] = np.zeros(len(wbs['Activity']))
-    
+
+
     df_cause_wdt.index = range(0,len(df_cause_wdt))
     for year in d_start_dates.keys():
         for ind, row in df_cause_wdt.iterrows():
@@ -2368,7 +2412,9 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
                 # sum the number of times Hs was above 2.0 and add it to df_cause_wdt['Activity == 'Install Pile][col == 'Hs']
                 for i in range(len(cause_wdt_dict[row['Weather Boolean Key']][1])):
                     param = cause_wdt_dict[row['Weather Boolean Key']][1][i]
-                    num_exceedance = np.sum(~cause_wdt_dict[row['Weather Boolean Key']][2][i][act_start_ind:act_end_ind])
+                    linked_downtime = ~cause_wdt_dict["Linked"][0][act_start_ind:act_end_ind]
+                    cause_downtime = ~cause_wdt_dict[row['Weather Boolean Key']][2][i][act_start_ind:act_end_ind]
+                    num_exceedance = np.sum(cause_downtime[linked_downtime])
                     df_cause_wdt[param].loc[ind] = df_cause_wdt[param].loc[ind] + num_exceedance
         
     print()
@@ -2393,8 +2439,25 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     plt.tight_layout()
     plt.savefig(cause_plot_ID)
 
+    #Marvel at this terrible coding!!
+    #Yearly stats plotting
+    df_yearly_stats_for_csv = df_yearly_stats.drop('Total duration [days]',axis=1).groupby('Year').sum()
+    mat_for_yearly_stats = df_yearly_stats_for_csv.values.astype('float') * 1.1574074074074 * 10**(-14)
+    df_yearly_stats_for_csv2 = pd.DataFrame(mat_for_yearly_stats)  
+    df_yearly_stats_for_csv2.columns = ["P0 duration [days]", "Shift downtime [days]", "Stand by for pre-requisite activity [days]", "Weather Downtime [days]"]
+    df_yearly_stats_for_csv2["Year"] = df_yearly_stats["Year"]
+    df_yearly_stats_for_csv2_gb = df_yearly_stats_for_csv2.groupby('Year').sum()
+    df_yearly_stats_for_csv2_gb.plot(kind='bar', stacked=True,  ylabel='Duration [days]', title="Yearly Campaigns", figsize=[12,6])
+    plt.tight_layout()
+    plt.legend(loc='lower right')
+    yearly_durations_ID = "".join([os.path.dirname(split_dict["Filepath"]),
+                    "/Yearly Durations - " ,
+                    options["ID"],
+                    ".png"])
+    plt.savefig(yearly_durations_ID)
+
     #mould df_cause_wdt in to CSVable df
-    df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()/len(d_start_dates.keys())
+    df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()/len(d_start_dates.keys(),)
     plot = df_cause_wdt_for_csv.plot(kind='bar', stacked=True, ylabel='Number of weather limit exceedaces', figsize=[10,10])
     plot.grid(True)
     plt.title("Average number of weather events for each activity"
@@ -2438,6 +2501,8 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     worksheet0.write_string(0, 1, 'Summary of downtimes',title_format)
     df_info.to_excel(writer, sheet_name='Summary', startrow=2, startcol=1, index=False)
     df_summary.to_excel(writer, sheet_name='Summary', startrow=len(df_info)+4, startcol=1, index=False)
+    df_yearly_stats.to_excel(writer, sheet_name='Summary', startrow=len(df_info)+4 + len(df_summary)+2, startcol=1, index=False)
+    worksheet0.insert_image('I16', yearly_durations_ID)
     #Add workability worksheet
     worksheet=workbook.add_worksheet('Workability')
     writer.sheets['Workability'] = worksheet
@@ -2461,8 +2526,12 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_for_csv.to_excel(writer, sheet_name='Activity Completion Dates', startrow=52, startcol=1, index=False)   
     percentile_plume_ID = f_percentile_plumes(p_end_dates, percentiles_to_find, wbs, options, split_dict)
     worksheet3.insert_image('B3', percentile_plume_ID)
-    programme_plume_ID = f_compare_with_programme(p_end_dates, percentiles_to_find, wbs, options, split_dict)
-    worksheet3.insert_image('Q3', programme_plume_ID)
+    if options["Compare with Programme"] == "Yes":
+        if options["Linked Simulation (Yes/ No)"] == "No":
+            programme_plume_ID = f_compare_with_programme(p_end_dates, wbs, options, split_dict)
+        else:
+            programme_plume_ID = f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_plume=df_linked_plume, linked_label=linked_label)
+        worksheet3.insert_image('Q3', programme_plume_ID)
 
 
     writer.save()
@@ -2502,7 +2571,7 @@ def create_df_info(options):
     
     return  df_info
 
-def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict):
+def f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_plume=None, linked_label=None):
     """ 
     Plot out percentile plumes (either by location of % completion)
     
@@ -2540,6 +2609,7 @@ def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict)
                  linewidth=2,
                  label="P50")
         
+        
         timedeltas = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h')
 
         # If there is a shift pattern we need to add the amount of time spent offshift during P0 to the P0 programme
@@ -2575,6 +2645,15 @@ def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict)
             label=df_milestones_cols[i],
             linewidth=2,
             linestyle='--')
+
+        if df_linked_plume is not None:
+            plt.fill_betweenx(np.linspace(0,100,len(df_linked_plume)), 
+                            df_linked_plume["End P20"], 
+                            df_linked_plume["End P80"],
+                            color="gray",  
+                            alpha= 0.6,
+                            label=linked_label)
+            
 
     """    
     else:
@@ -2623,7 +2702,7 @@ def f_compare_with_programme(p_end_dates, percentiles, wbs, options, split_dict)
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='MS'))
     else:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='QS'))
-        
+
     programe_comparison_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/Programme Comparison -",
                                    ID,
@@ -2929,6 +3008,13 @@ if __name__ == '__main__':
                 linked_activity_inds = list(linked_wbs[linked_wbs["Activity"] == linked_activity].index)
                 linked_activity_dates = {}
                 linked_activity_locations = linked_wbs["Location"].iloc[linked_activity_inds]
+                df_linked_plume = (linked_sim_output[0]['DF Percentiles']
+                                   [linked_sim_output[0]['DF Percentiles']["AC"] == options["Linked Simulation Tracked Activity (For Plotting)"]]
+                                   [["AC", "End P20", "End P80"]])
+                linked_label = options["Linked Legend (For Plotting)"]
+                df_linked_activities = (linked_sim_output[0]['DF Percentiles']
+                                        [linked_sim_output[0]['DF Percentiles']["AC"] == options["Linked Activity (Previous Simulation)"]]
+                                        [["AC", "End P20", "End P80"]])
 
                 for key in linked_end_dates.keys():
                     linked_activity_dates[key] = linked_end_dates[key][linked_activity_inds]
@@ -2941,7 +3027,10 @@ if __name__ == '__main__':
             d_end_ts,
             d_start_dates,
             d_end_dates,
-            d_end_dates_unchanged) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence)
+            d_end_dates_unchanged,
+            d_linked_downtime,
+            cause_wdt_dict) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence, cause_wdt_dict)
+
             toc = time.time()
             print("Complete in", toc - tic, "s")
 
@@ -2957,7 +3046,8 @@ if __name__ == '__main__':
                                                                                           wbs, 
                                                                                           options["ID"],
                                                                                           split_dict,
-                                                                                          cause_wdt_dict)
+                                                                                          cause_wdt_dict,
+                                                                                          d_linked_downtime)
                 toc = time.time()
                 print("Complete in", toc - tic, "s")
 
@@ -2988,7 +3078,11 @@ if __name__ == '__main__':
                 f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
             
             if options["Compare with Programme"] == "Yes":
-                f_compare_with_programme(p_end_dates, percentiles_to_find, wbs, options, split_dict)
+                if options["Linked Simulation (Yes/ No)"] == "No":
+                    f_compare_with_programme(p_end_dates, wbs, options, split_dict)
+                else:
+                    f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_plume=df_linked_plume, linked_label=linked_label)
+
 
         toc = time.time()
         print("")
