@@ -2134,7 +2134,7 @@ def simulate_year(wbs,  window_bool_dict, sim_start_ts, dates, bool_dict):
     end_dates = dates[end_ts]
 
     return start_ts, end_ts, start_dates, end_dates, remove_year
-
+    
 def simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence, cause_wdt_dict):
     """Simulate each year"""
     weather_id_dummy = list(weather.keys())[1]
@@ -2278,6 +2278,35 @@ def write_excel(filename,sheetname,dataframe):
             dataframe.to_excel(writer, sheet_name=sheetname,index=False)
             writer.save()
 
+def f_shift_downtime(options, duration, mode='total_duration'):
+    #duration must be a numpy float or float of days
+    if options['24 Hour'] == 'Yes':
+        shift_duration_pd = 1
+        shift_downtime = np.zeros(len(duration))
+    else:
+        shift_duration_pd = ((datetime.timedelta(hours=options['Shift End [HH:MM]'].hour, minutes=options['Shift End [HH:MM]'].minute)
+                         - datetime.timedelta(hours=options['Shift Start [HH:MM]'].hour, minutes=options['Shift Start [HH:MM]'].minute)
+                          - 2 * datetime.timedelta(hours=options['Transit Duration [HH:MM]'].hour, minutes=options['Transit Duration [HH:MM]'].minute))
+                          /datetime.timedelta(days=1))
+        start_day_frac = (options['Shift Start [HH:MM]'].hour*60 + options['Shift Start [HH:MM]'].minute)/60/24
+        shift_downtime = list()
+        if mode == 'total_duration':
+            frac, whole = np.modf(duration)
+            for frac_i, whole_i in zip(frac, whole):
+                if frac_i > start_day_frac:
+                    shift_downtime.append(whole_i * (1-shift_duration_pd) + start_day_frac)
+                else:
+                    shift_downtime.append(whole_i * (1-shift_duration_pd))
+        elif mode == 'from_net_duration':
+            for dur in duration:
+                shift_downtime.append(dur/shift_duration_pd * (1-shift_duration_pd))
+
+    return shift_downtime, shift_duration_pd
+
+def f_timedelta_to_float(timedelta):
+    #in days
+    return timedelta.days + timedelta.seconds/60/60/24
+
 def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, ID, split_dict, cause_wdt_dict, d_linked_downtime):
     """ Export percentiles, both per activity and summary in the same excel file"""
     
@@ -2295,26 +2324,17 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     summary_stats = np.round(((p_end_dates[:,-1] 
                      -  p_start_dates[:,0]).astype('float')/86400000000000),1)
     end_dates = (p_end_dates[:,-1] -  p_start_dates[:,0]) + d_start_dates[list(d_start_dates.keys())[0]][0] 
-    if options['24 Hour'] == 'Yes':
-        shift_duration_pd = 1
-        shift_downtime = summary_stats - summary_stats
-    else:
-        shift_duration_pd = ((datetime.timedelta(hours=options['Shift End [HH:MM]'].hour, minutes=options['Shift End [HH:MM]'].minute)
-                         - datetime.timedelta(hours=options['Shift Start [HH:MM]'].hour, minutes=options['Shift Start [HH:MM]'].minute)
-                          - 2 * datetime.timedelta(hours=options['Transit Duration [HH:MM]'].hour, minutes=options['Transit Duration [HH:MM]'].minute))
-                          /datetime.timedelta(days=1))
-        shift_downtime = np.floor(summary_stats) * (1-shift_duration_pd)
-
+    
 
     #linked_downtime_ps = f_create_percentiles(d_linked_downtime, percentiles_to_find, output_type="Float")/24*timestep #commented because percentiles are confusing with weather percentiles as well
-
-    P0_duration = np.round(wbs["Duration [timesteps]"].sum()/24*timestep,1)
-    weather_downtime = summary_stats - shift_downtime - P0_duration #- linked_downtime_ps
     #P0 stuff
+
+    net_duration = wbs["Duration [timesteps]"].sum()/24*timestep
+    P0_duration = net_duration + f_shift_downtime(options, [net_duration], 'from_net_duration')[0][0]
     summary_stats = np.insert(summary_stats, 0, P0_duration)
-    shift_downtime = np.insert(shift_downtime, 0, P0_duration * (1-shift_duration_pd))
-    weather_downtime = np.insert(weather_downtime,0,0)
-    #linked_downtime_ps = np.insert(linked_downtime_ps,0,0)
+    shift_downtime = np.asarray(f_shift_downtime(options, summary_stats)[0])
+    weather_downtime = summary_stats - shift_downtime - net_duration
+
     end_dates = np.insert(end_dates, 0, datetime.timedelta(days=P0_duration) + d_start_dates[list(d_start_dates.keys())[0]][0] )
     #prepare for export to csv
     summary = np.round(np.vstack((summary_stats, shift_downtime,  weather_downtime)),1) #linked_downtime_ps
@@ -2323,25 +2343,16 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_summary_aux.loc[len(df_summary)] = end_dates
     df_summary_aux.index=range(len(df_summary_aux))
     df_summary = pd.concat((df_summary, df_summary_aux), axis=1)
-    shift_duration = pd.Timedelta(24, unit='h')
+
     #Activty Percentile Stats
     for i in range(0,len(percentiles_with_p0)):
         if i == 0:
             P0_activity_durations = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h')
-            
+            P0_activity_duration_float = [f_timedelta_to_float(x) for x in P0_activity_durations]
             # If there is a shift pattern we need to add the amount of time spent offshift during P0 to the P0 programme
-            if options['24 Hour'] == 'No':
-                shift_duration = pd.to_timedelta(options['Shift End [HH:MM]'].hour - options['Shift Start [HH:MM]'].hour -  
-                                                 (2 * (options['Transit Duration [HH:MM]'].hour*60 + options['Transit Duration [HH:MM]'].minute)/60), unit='h')
-                offshift_duration = pd.to_timedelta(24, unit='h') - shift_duration
-                num_whole_shifts_in_timedeltas = [np.floor(timedelta/shift_duration) for timedelta in P0_activity_durations]
-                total_off_shifts = [num_whole_shifts_in_timedelta * offshift_duration for num_whole_shifts_in_timedelta in num_whole_shifts_in_timedeltas]
-                P0_durations = list()
-                for total_off_shift, timedelta in zip(total_off_shifts, P0_activity_durations):
-                    P0_durations.append(timedelta + total_off_shift)
-            else:
-                P0_durations = list(P0_activity_durations)
-
+            shift_downtime, shift_duration_pd= f_shift_downtime(options, P0_activity_duration_float, 'from_net_duration')
+            P0_durations_float = list(np.asarray(shift_downtime) + np.asarray(P0_activity_duration_float))
+            P0_durations = [pd.Timedelta(x, unit='D').round('5min') for x in P0_durations_float]
             #manipulate so P0_start_dates is one step behind with an extra 0 duration at the beginning
             padding = pd.to_timedelta(0, unit='D')
             P0_start_durations = P0_durations[0:-1]
@@ -2366,29 +2377,27 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     #Stats by year
     linked_waiting = list()
     weather_waiting = list()
-    shift_waiting = list()
+    additional_shift_waiting = list()
     year_durs = list()
     P0_durations_yearly = list()
-
+    P0_dur_and_P0_shift_downtime_yearly = list()
+    P0_duration = wbs["Duration [timesteps]"].sum()/24*timestep
     for year in d_linked_downtime.keys():
         linked_dur = d_linked_downtime[year]
         linked_waiting.append(pd.Timedelta(linked_dur*timestep, unit='h'))
         year_dur = d_end_dates[year][-1] - d_start_dates[year][0]
         year_durs.append(year_dur)
-        P0_durations_yearly.append(pd.Timedelta(P0_duration, unit='D'))
-
+        P0_durations_yearly.append(pd.Timedelta(P0_duration, unit='D').round('30min'))
+        P0_shift_downtime = f_shift_downtime(options, [P0_duration], mode='from_net_duration')[0][0]
+        P0_dur_and_P0_shift_downtime_yearly.append(pd.Timedelta(P0_duration +P0_shift_downtime, unit='D').round('30min'))
         #final day must finish during a shift, therefore must add first part of day off to shift total duration
-        if options["24 Hour"] == "No":
-            shift_dur = year_dur.days*(pd.Timedelta(24, unit='h')- shift_duration).seconds/60/60/24 - (year_dur.seconds/60/60 - (options["Shift Start [HH:MM]"].hour + options["Shift Start [HH:MM]"].minute/60))/24
-            shift_waiting.append(pd.Timedelta(shift_dur, 'D'))
-        else:
-            shift_dur = 0
-            shift_waiting.append(pd.Timedelta(0, unit='h'))
-        
-        weather_waiting.append(year_dur - pd.Timedelta(linked_dur*timestep, unit='h') - pd.Timedelta(shift_dur, unit='D') - pd.Timedelta(P0_duration, unit='D'))
+        shift_downtime = f_shift_downtime(options, [f_timedelta_to_float(year_dur)])[0][0]
+        additional_shift_waiting.append(pd.Timedelta(shift_downtime-P0_shift_downtime, 'D'))
+        weather_waiting.append(year_dur - pd.Timedelta(linked_dur*timestep, unit='h') - pd.Timedelta(shift_downtime, unit='D') - pd.Timedelta(P0_duration, unit='D'))
 
-    df_yearly_stats = pd.DataFrame(np.transpose([list(d_linked_downtime.keys()),P0_durations_yearly, year_durs, shift_waiting, linked_waiting, weather_waiting]))
-    df_yearly_stats.columns = ["Year","P0 duration [days]", "Total duration [days]", "Shift downtime [days]", "Stand by for pre-requisite activity [days]", "Weather Downtime [days]"]
+
+    df_yearly_stats = pd.DataFrame(np.transpose([list(d_linked_downtime.keys()),P0_dur_and_P0_shift_downtime_yearly, year_durs, additional_shift_waiting, linked_waiting, weather_waiting]))
+    df_yearly_stats.columns = ["Year","P0 duration [days]", "Total duration [days]", "Additional shift downtime [days]", "Stand by for pre-requisite activity [days]", "Weather Downtime [days]"]
     
 
     ##find cause of wdt
@@ -2444,7 +2453,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_yearly_stats_for_csv = df_yearly_stats.drop('Total duration [days]',axis=1).groupby('Year').sum()
     mat_for_yearly_stats = df_yearly_stats_for_csv.values.astype('float') * 1.1574074074074 * 10**(-14)
     df_yearly_stats_for_csv2 = pd.DataFrame(mat_for_yearly_stats)  
-    df_yearly_stats_for_csv2.columns = ["P0 duration [days]", "Shift downtime [days]", "Stand by for pre-requisite activity [days]", "Weather Downtime [days]"]
+    df_yearly_stats_for_csv2.columns = ["P0 duration [days]", "Additional Shift downtime [days]", "Stand by for pre-requisite activity [days]", "Weather Downtime [days]"]
     df_yearly_stats_for_csv2["Year"] = df_yearly_stats["Year"]
     df_yearly_stats_for_csv2_gb = df_yearly_stats_for_csv2.groupby('Year').sum()
     df_yearly_stats_for_csv2_gb.plot(kind='bar', stacked=True,  ylabel='Duration [days]', title="Yearly Campaigns", figsize=[12,6])
@@ -2502,7 +2511,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_info.to_excel(writer, sheet_name='Summary', startrow=2, startcol=1, index=False)
     df_summary.to_excel(writer, sheet_name='Summary', startrow=len(df_info)+4, startcol=1, index=False)
     df_yearly_stats.to_excel(writer, sheet_name='Summary', startrow=len(df_info)+4 + len(df_summary)+2, startcol=1, index=False)
-    worksheet0.insert_image('I16', yearly_durations_ID)
+    worksheet0.insert_image('I18', yearly_durations_ID)
     #Add workability worksheet
     worksheet=workbook.add_worksheet('Workability')
     writer.sheets['Workability'] = worksheet
@@ -2528,9 +2537,9 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     worksheet3.insert_image('B3', percentile_plume_ID)
     if options["Compare with Programme"] == "Yes":
         if options["Linked Simulation (Yes/ No)"] == "No":
-            programme_plume_ID = f_compare_with_programme(p_end_dates, wbs, options, split_dict)
+            programme_plume_ID = f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dict)
         else:
-            programme_plume_ID = f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_plume=df_linked_plume, linked_label=linked_label)
+            programme_plume_ID = f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dict, df_linked_plume=df_linked_plume, linked_label=linked_label)
         worksheet3.insert_image('Q3', programme_plume_ID)
 
 
@@ -2571,10 +2580,9 @@ def create_df_info(options):
     
     return  df_info
 
-def f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_plume=None, linked_label=None):
+def f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dict, df_linked_plume=None, linked_label=None):
     """ 
     Plot out percentile plumes (either by location of % completion)
-    
     """
     #sequential_colors = sns.color_palette("PuBu",11)
     colour = '#57A4C1' #ODSL 1
@@ -2594,14 +2602,22 @@ def f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_pl
         marked_act_inds.insert(0,0)
         labels = np.arange(1, len(ticks)+1)
         
+        for i in range(0,3):
+            plt.fill_betweenx(yvals, 
+                                p_end_dates[1+i,marked_act_inds], 
+                                p_end_dates[8-i,marked_act_inds],  
+                                color=colour, 
+                                alpha= 0.5 + 0.1*i,
+                                label="".join(["P", str(int(i+1)), "0", "- P", str(int(9-i)), "0"]))
 
+        """
         plt.fill_betweenx(yvals, 
                             p_end_dates[1,marked_act_inds], 
                             p_end_dates[7,marked_act_inds],  
                             color=colour, 
                             alpha= 0.8,
                             label="P20 - P80")
-
+        """
         plt.plot(p_end_dates[4,marked_act_inds],
                  yvals, 
                  color=colour2, 
@@ -2611,22 +2627,14 @@ def f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_pl
         
         
         timedeltas = pd.to_timedelta(wbs["Duration [timesteps]"].cumsum()*timestep, unit='h')
-
+        net_durations = [f_timedelta_to_float(x) for x in timedeltas]
         # If there is a shift pattern we need to add the amount of time spent offshift during P0 to the P0 programme
-        if options['24 Hour'] == 'No':
-            shift_duration = pd.to_timedelta(options['Shift End [HH:MM]'].hour - options['Shift Start [HH:MM]'].hour -  
-                                             (2 * (options['Transit Duration [HH:MM]'].hour*60 + options['Transit Duration [HH:MM]'].minute)/60), unit='h')
-            offshift_duration = pd.to_timedelta(24, unit='h') - shift_duration
-            num_whole_shifts_in_timedeltas = [np.floor(timedelta/shift_duration) for timedelta in timedeltas]
-            total_off_shifts = [num_whole_shifts_in_timedelta * offshift_duration for num_whole_shifts_in_timedelta in num_whole_shifts_in_timedeltas]
-            P0_durations = list()
-            for total_off_shift, timedelta in zip(total_off_shifts, timedeltas):
-                P0_durations.append(timedelta + total_off_shift)
-        else:
-            P0_durations = timedeltas
+        shift_downtime = f_shift_downtime(options, net_durations, mode='from_net_duration')[0]
+        P0_durations = np.asarray(net_durations) + np.asarray(shift_downtime)
+        P0_end_dates = [pd.Timedelta(x, unit='D') + p_start_dates[0,0] for x in P0_durations]
+        P0_end_dates_marked = [P0_end_dates[ind] for ind in marked_act_inds]
 
-        P0_end_dates = [P0_durations[ind] + p_end_dates[0,0] for ind in marked_act_inds]
-        plt.plot(P0_end_dates,
+        plt.plot(P0_end_dates_marked,
             yvals, 
             color='black', 
             linestyle='-', 
@@ -2653,8 +2661,7 @@ def f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_pl
                             color="gray",  
                             alpha= 0.6,
                             label=linked_label)
-            
-
+        
     """    
     else:
 
@@ -2691,13 +2698,20 @@ def f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_pl
                        " locations"]))
     plt.grid(True)
     plt.ylim([0,100])
-    x_range_min = p_end_dates[0,0] #- pd.to_timedelta(7, unit='d')
-    x_range_max = p_end_dates[-2,-1] #+ pd.to_timedelta(7, unit='d')
+    if df_linked_plume is not None:
+        x_range_min = min(p_end_dates[0,0], np.datetime64(df_linked_plume["End P20"].iloc[0]))#- pd.to_timedelta(7, unit='d')
+        x_range_max = max(p_end_dates[-2,-1], np.datetime64(df_linked_plume["End P80"].iloc[-1])) #+ pd.to_timedelta(7, unit='d')
+    else:
+        x_range_min = p_end_dates[0,0]
+        x_range_max = p_end_dates[-2,-1]
+
     x_range = (x_range_max - x_range_min).astype('timedelta64[D]').astype(float)
-    if x_range/10 < 1:
+    if x_range/10 < 3:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(1, unit='d'), x_range_max + pd.to_timedelta(1, unit='d'), freq='D'))
     elif x_range/7 < 10:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(3, unit='d'), x_range_max + pd.to_timedelta(3, unit='d'), freq='W'))
+    elif x_range/15 < 10:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='SM'))
     elif x_range/30 < 10:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='MS'))
     else:
@@ -2735,14 +2749,12 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
         labels = np.arange(1, len(ticks)+1)
         
         for i in range(0,3):
-
             plt.fill_betweenx(yvals, 
                               p_end_dates[1+i,marked_act_inds], 
                               p_end_dates[8-i,marked_act_inds],  
                               color=colour, 
                               alpha= 0.5 + 0.1*i,
                                 label="".join(["P", str(int(i+1)), "0", "- P", str(int(9-i)), "0"]))
-
 
         plt.plot(p_end_dates[4,marked_act_inds],
                  yvals, 
@@ -2810,10 +2822,12 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
     x_range_min = p_end_dates[0,0] #- pd.to_timedelta(7, unit='d')
     x_range_max = p_end_dates[-2,-1] #+ pd.to_timedelta(7, unit='d')
     x_range = (x_range_max - x_range_min).astype('timedelta64[D]').astype(float)
-    if x_range/10 < 1:
+    if x_range/10 < 3:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(1, unit='d'), x_range_max + pd.to_timedelta(1, unit='d'), freq='D'))
     elif x_range/7 < 10:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(3, unit='d'), x_range_max + pd.to_timedelta(3, unit='d'), freq='W'))
+    elif x_range/15 < 10:
+        plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='SM'))
     elif x_range/30 < 10:
         plt.xticks(pd.date_range(x_range_min - pd.to_timedelta(7, unit='d'), x_range_max + pd.to_timedelta(7, unit='d'), freq='MS'))
     else:
@@ -2901,7 +2915,6 @@ def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_
 
 
     for i in range(0,len(percentiles_to_find)):
-
         df_summary[summary_column_names[i]].loc[str(start_date)] = summary_stats[i]
 
     return df_summary, df_p_end_dates
@@ -2927,15 +2940,14 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict):
 
         counter = counter+1
 
-    plt.legend(loc='best')
+    plt.legend(loc='lower right')
     plt.xlim([min(df_summary.index), max(df_summary.index)])
-    plt.xticks(fontsize=14)
-    plt.yticks(fontsize=14)
-    plt.ylabel("Campaign Duration [Days]",fontsize=16)
-    plt.xlabel("Start Date", fontsize=16)
+    plt.ylabel("Campaign duration [days]")
+    plt.xlabel("Start date")
     plt.title("Start Date Sensitivity")
     plt.grid(True)
-    
+    plt.ylim([0, np.round(df_summary[df_summary.columns[-1]].values.max()*1.05)])
+
     sds_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/SDS Plume -",
                                    options["ID"],
@@ -3079,9 +3091,9 @@ if __name__ == '__main__':
             
             if options["Compare with Programme"] == "Yes":
                 if options["Linked Simulation (Yes/ No)"] == "No":
-                    f_compare_with_programme(p_end_dates, wbs, options, split_dict)
+                    f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dict)
                 else:
-                    f_compare_with_programme(p_end_dates, wbs, options, split_dict, df_linked_plume=df_linked_plume, linked_label=linked_label)
+                    f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dict, df_linked_plume=df_linked_plume, linked_label=linked_label)
 
 
         toc = time.time()
@@ -3132,7 +3144,9 @@ if __name__ == '__main__':
                 d_end_ts,
                 d_start_dates,
                 d_end_dates,
-                d_end_dates_unchanged) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence)
+                d_end_dates_unchanged,
+                d_linked_downtime,
+                cause_wdt_dict) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence, cause_wdt_dict)
 
                 if options["Export Stats"] == "Yes":
                     df_summary, df_p_end_dates = f_create_sensitivity_percentiles(d_start_dates, 
@@ -3144,6 +3158,7 @@ if __name__ == '__main__':
                     end_percentiles_dict[str(start_date)] = df_p_end_dates
                     if start_date == start_dates[-1]:
                         df_info =  create_df_info(options)
+
                         sds_plot_id = f_plot_start_date_sensitivty_plume(df_summary, split_dict)
                         # Save to excel
                         out_ID = "".join([os.path.dirname(split_dict["Filepath"]),
