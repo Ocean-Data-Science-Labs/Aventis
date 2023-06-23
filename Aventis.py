@@ -740,7 +740,7 @@ def f_split_input_sheet():
 
     #Finding simulation info
     i = 1
-    while pd.isnull(df["Aventis"][first_options-i]):
+    while df["Aventis"][first_options-i] != "Simulation Info":
         i += 1
     last_simulation = first_options-i
 
@@ -1099,7 +1099,7 @@ def f_read_options(split_dict):
     df = pd.read_excel(split_dict["Filepath"], sheet_name="Simulation", skiprows = 2, usecols=[1,2])
     
     #Options- select subset of df and turn in to dictionary, delete anything that shouldn't be there
-    options_df = df.iloc[ split_dict["First Option"]:split_dict["Last Option"] , : ]
+    options_df = df.iloc[ split_dict["Last Simulation Info"]:split_dict["Last Option"] , : ]
     options = pd.Series(options_df[options_df.columns[1]].values,index=options_df["Simulation Info"]).to_dict()
     #options = df.to_dict(orient="Index")
     del options["Sequence"]
@@ -1763,7 +1763,7 @@ def f_create_all_bools(wbs, weather):
                 bool_aux[j+1] = np.asarray(weather_aux['Shift Pattern'])
                 cause_wdt_dict[unique_val_ind] = [int(conditions[indices_ww[0]]), params, bool_aux] #save to find out cause of WDT
 
-                if len(indices_val) > 1:
+                if len(indices_val) > 0:
                     bool_aux = bool_aux.all(axis = 0)
                 
                 # finally, create an entry in to the bool dictionary (bool_dict)
@@ -2460,15 +2460,23 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     # Plot
     colour2 = '#0393A5' #ODSL 2
     plt.pie(sizes, labels=labels, autopct='%1.1f%%')
-    plt.title("Overall cause of WDT")
-
+    min_year = np.min(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    max_year = np.max(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    textstr = (''.join(["Project: ", options["Project"], 
+                        ", Scope: ", options["Scope"],
+                        ", Vessel: ", options["Vessel Name"],
+                        "\n",
+                        "Start date: ", str(p_end_dates[0][0])[0:10],
+                        ", Years simulated: ", str(min_year), "-", str(max_year)]))
+    plt.title(textstr, fontsize=7)
+    plt.suptitle("Cause of weather downtime across campaign\n.............................................................................................", fontsize=12)
     cause_plot_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                     "/Cause WDT - " ,
                     options["ID"],
                     ".png"])
     
     plt.tight_layout()
-    plt.savefig(cause_plot_ID)
+    plt.savefig(cause_plot_ID.replace(':', ''))
 
     #Marvel at this terrible coding!!
     #Yearly stats plotting
@@ -2485,20 +2493,29 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
                     "/Yearly Durations - " ,
                     options["ID"],
                     ".png"])
-    plt.savefig(yearly_durations_ID)
+    plt.savefig(yearly_durations_ID.replace(':', ''))
 
     #mould df_cause_wdt in to CSVable df
     df_cause_wdt_for_csv = df_cause_wdt.groupby('Activity').sum()/len(d_start_dates.keys(),)
     plot = df_cause_wdt_for_csv.plot(kind='bar', stacked=True, ylabel='Number of weather limit exceedances', figsize=[10,10])
     plot.grid(True)
-    plt.title("Average number of weather events for each activity"
-            )
+    min_year = np.min(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    max_year = np.max(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    textstr = (''.join([
+                       '\n', "Project: ", options["Project"], 
+                        ", Scope: ", options["Scope"],
+                        ", Vessel: ", options["Vessel Name"],
+                        "\n",
+                        "Start date: ", str(p_end_dates[0][0])[0:10],
+                        ", Years simulated: ", str(min_year), "-", str(max_year)]))
+    plt.title(textstr, fontsize=11)
+    plt.suptitle("Average number of weather events for each activity\n.............................................................................................", fontsize=14)
     plt.tight_layout()
     activity_cause_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                     "/Activity Cause WDT - " ,
                     options["ID"],
                     ".png"])
-    plt.savefig(activity_cause_ID)
+    plt.savefig(activity_cause_ID.replace(':', ''))
     
 
     #Calculate monthly persistences/ workabilities
@@ -2532,7 +2549,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_info =  create_df_info(options)
 
     # Save to excel
-    writer = pd.ExcelWriter(out_ID, engine='xlsxwriter')
+    writer = pd.ExcelWriter(out_ID.replace(':', ''), engine='xlsxwriter')
     workbook=writer.book
     title_format = workbook.add_format({"font_name": "Helvetica", "font_size": 24, "font_color": "#0393A5", "italic": True, "bold": True, "bg_color": "#FFFFFF" })
     percent_format = workbook.add_format({'num_format': '0%'})
@@ -2552,7 +2569,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     worksheet.write_string(0, 1, 'Workability of activities',title_format)
     df_persistences.to_excel(writer, sheet_name='Workability', startrow=2, startcol=1, index=False)
     worksheet.set_column(2, len(df_persistences.columns), None, percent_format)
-    mean_plot_ID = f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
+    mean_plot_ID = f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict, p_end_dates)
     worksheet.insert_image('B17', mean_plot_ID)
     #Add cause wdt worksheet
     worksheet2=workbook.add_worksheet('Cause of WDT')
@@ -2667,13 +2684,15 @@ def f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dic
         P0_durations = np.asarray(net_durations) + np.asarray(shift_downtime)
         P0_end_dates = [pd.Timedelta(x, unit='D') + p_start_dates[0,0] for x in P0_durations]
         P0_end_dates_marked = [P0_end_dates[ind] for ind in marked_act_inds]
-
+        
+        
         plt.plot(P0_end_dates_marked,
             yvals, 
             color='black', 
             linestyle='-', 
             linewidth=2,
             label="P0")
+        
 
         plt.ylabel("Campaign Completion [%]")
         
@@ -2723,13 +2742,20 @@ def f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dic
     
     plt.legend()
     plt.xticks(rotation=45)
-    plt.title("".join(["Programme comparison of ",
-                       ID,
-                       "\n",
-                       options["Activity that Marks End of Location"],
-                       "\n",
-                       str(len(labels)),
-                       " locations"]))
+    min_year = np.min(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    max_year = np.max(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    textstr = (''.join([
+                       '\n', "Project: ", options["Project"], 
+                        ", Scope: ", options["Scope"],
+                        ", Vessel: ", options["Vessel Name"],
+                        "\n",
+                        "Activity: ", options["Activity that Marks End of Location"],
+                        " (", str(len(labels)), " locations",")",
+                        ", Start date: ", str(p_end_dates[0][0])[0:10],
+                        ", Years simulated: ", str(min_year), "-", str(max_year)]))
+    plt.title(textstr, fontsize=11)
+    plt.suptitle("Programme compliance\n.............................................................................................", fontsize=14)
+    
     plt.grid(True)
     plt.ylim([0,100])
     if df_linked_plume is not None:
@@ -2756,7 +2782,7 @@ def f_compare_with_programme(p_start_dates, p_end_dates, wbs, options, split_dic
                                    ID,
                                    ".png"])
     
-    plt.savefig(programe_comparison_plume_ID)
+    plt.savefig(programe_comparison_plume_ID.replace(':', ''))
 
     return programe_comparison_plume_ID
 
@@ -2869,25 +2895,36 @@ def f_percentile_plumes(p_end_dates, percentiles, wbs, options, split_dict):
 
     plt.legend()
     plt.xticks(rotation=45)
-    plt.title("".join(["Percentile plume of ",
-                       ID,
-                       "\n",
-                       options["Activity that Marks End of Location"],
-                       "\n",
-                       str(len(labels)),
-                       " locations"]),)
+    min_year = np.min(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    max_year = np.max(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    textstr = (''.join([
+                       '\n', "Project: ", options["Project"], 
+                        ", Scope: ", options["Scope"],
+                        ", Vessel: ", options["Vessel Name"],
+                        "\n",
+                        "Activity: ", options["Activity that Marks End of Location"],
+                        " (", str(len(labels)), " locations",")",
+                        ", Start date: ", str(p_end_dates[0][0])[0:10],
+                        ", Years simulated: ", str(min_year), "-", str(max_year)]))
+    plt.title(textstr, fontsize=11)
+    plt.suptitle("Percentile plume\n.............................................................................................", fontsize=14)
+
     plt.grid(True)
     percentile_plume_ID = "".join([os.path.dirname(split_dict["Filepath"]),
                                    "/Percentile Plume -",
                                    ID,
                                    ".png"])
-    
-    plt.savefig(percentile_plume_ID)
+
+
+    plt.text(0.05, 0.95, textstr, fontsize=14,
+        verticalalignment='top')
+
+    plt.savefig(percentile_plume_ID.replace(':', ''))
 
     return percentile_plume_ID
     
 
-def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict):
+def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict, p_end_dates):
     """calculate and plot the mean WDT for each activity"""
     
     #sequential_colors = sns.color_palette("PuBu",11)
@@ -2910,9 +2947,20 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
     wbs["Counter"] = len(d_end_ts.keys())
     activity_wdt = wbs.groupby(["Activity"])["WDT"].sum()/wbs.groupby(["Activity"])["Counter"].sum()
     activity_wdt = activity_wdt.sort_values(ascending=False)
-    plt.bar(activity_wdt.index,activity_wdt*timestep, color=colour)
+    plt.bar(activity_wdt[activity_wdt>0].index,activity_wdt[activity_wdt>0]*timestep, color=colour)
     plt.ylabel("Mean WDT [hrs]", fontsize=16)
-    plt.title("".join(["WDT by Activity for ", options["ID"]]))
+    min_year = np.min(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    max_year = np.max(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    textstr = (''.join([
+                       '\n', "Project: ", options["Project"], 
+                        ", Scope: ", options["Scope"],
+                        ", Vessel: ", options["Vessel Name"],
+                        "\n",
+                        "Start date: ", str(p_end_dates[0][0])[0:10],
+                        ", Years simulated: ", str(min_year), "-", str(max_year)]))
+    plt.title(textstr, fontsize=11)
+    plt.suptitle("Weather downtime by activity\n.............................................................................................", fontsize=14)
+ 
     _ = plt.xticks(rotation=90)
     plt.grid(True)
     plt.xticks(fontsize=14)
@@ -2923,7 +2971,7 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
                        options["ID"],
                        ".png"])
     plt.tight_layout()
-    plt.savefig(plot_ID)
+    plt.savefig(plot_ID.replace(':', ''))
     
     return plot_ID
  
@@ -2963,17 +3011,29 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict, options, wbs):
     counter = 0
     colormap = mcp.gen_color(cmap="viridis",n=len(df_summary.columns))
     for col in reversed(df_summary.columns):
-
-        plt.fill_between(x=np.squeeze(list(df_summary[col].index)),
-                         y1=list(df_summary[col].values),
-                         color=colormap[counter],
-                         alpha=0.7,
-                         label=col)
+        if col != "P100":
+            plt.fill_between(x=np.squeeze(list(df_summary[col].index)),
+                            y1=list(df_summary[col].values),
+                            color=colormap[counter],
+                            alpha=0.7,
+                            label=col)
+        else:
+            plt.fill_between(x=np.squeeze(list(df_summary[col].index)),
+                y1=list(df_summary[col].values),
+                color=colormap[counter],
+                alpha=0.7,
+                label="Max in hindcast")
 
         if counter == 0:
             plt.xlim(0, max(df_summary[col].values)+15)
 
         counter = counter+1
+
+    plt.plot(np.squeeze(list(df_summary["P50"].index)),
+             list(df_summary["P50"].values),
+             color="black",
+             label="P50",
+             linewidth=1.5)
 
     net_duration = wbs["Net Duration [hrs]"].sum()
     net_duration_weathered_activities = wbs["Net Duration [hrs]"][wbs['Weather Boolean Key']!=-1].sum()/24
@@ -3000,8 +3060,17 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict, options, wbs):
     plt.xlim([min(df_summary.index), max(df_summary.index)])
     plt.ylabel("Campaign duration [days]")
     plt.xlabel("Start date")
-    plt.title("".join(["Start Date Sensitivity: ",
-                    ID]))
+    min_year = np.min(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    max_year = np.max(weather[''.join([weather_IDs[0], "_data"])].index.year)
+    textstr = (''.join([
+                       '\n', "Project: ", options["Project"], 
+                        ", Scope: ", options["Scope"],
+                        ", Vessel: ", options["Vessel Name"],
+                        "\n",
+                        "Years simulated: ", str(min_year), "-", str(max_year)]))
+    plt.title(textstr, fontsize=11)
+    plt.suptitle("Start date sensitivity\n.............................................................................................", fontsize=14)
+ 
     plt.grid(True)
     plt.ylim([0, np.round(df_summary[df_summary.columns[-1]].values.max()*1.05)])
     plt.text(s=''.join([" P0 Duration: ",str(np.round(P0_duration,1)), ' days']),
@@ -3014,9 +3083,9 @@ def f_plot_start_date_sensitivty_plume(df_summary, split_dict, options, wbs):
                                    options["ID"],
                                    ".png"])
 
-    plt.savefig(sds_plume_ID)
+    plt.savefig(sds_plume_ID.replace(':', ''))
 
-    return sds_plume_ID
+    return sds_plume_ID.replace(':', '')
 
 # Running Script #########################################################
 # Apply the default theme
@@ -3154,7 +3223,7 @@ if __name__ == '__main__':
                 f_percentile_plumes(p_end_dates, percentiles_to_find, wbs, options, split_dict)
 
             if options["Activity WDT"] == "Yes":
-                f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict)
+                f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict, p_end_dates)
             
             if options["Compare with Programme"] == "Yes":
                 if options["Linked Simulation (Yes/ No)"] == "No":
