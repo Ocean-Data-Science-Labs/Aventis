@@ -1865,7 +1865,6 @@ def f_continuous_activity_bool(wbs, options, window_bool_dict):
                     aux = window_bool_dict[list_of_bools[j]]
                 else:   
                     aux = window_bool_dict[list_of_bools[j]][int(sum((list_of_durs[:j]))):]
-
                     aux = np.append(aux, np.ones(int(sum(list_of_durs[:j]))))
 
 
@@ -1873,9 +1872,17 @@ def f_continuous_activity_bool(wbs, options, window_bool_dict):
 
 
             cont_bool_array = bool_array.all(axis=0)
-            window_bool_dict["".join(["C", str(counter)])] = cont_bool_array           
+            window_bool_dict["".join(["C", str(counter)])] = cont_bool_array       
             wbs["Weather Boolean Key"].loc[list_of_acts[0]] = "".join(["C", str(counter)])
+            
 
+            params_used = list()
+            for bool_i in list_of_bools:
+                for param in cause_wdt_dict[bool_i][1]:
+                    if param not in params_used:
+                        params_used.append(param)
+            cause_wdt_dict[ "".join(["C", str(counter)])] = [np.sum(list_of_durs), params_used, cont_bool_array] 
+            
             list_of_acts = list()
             list_of_durs = list()
             list_of_bools = list()
@@ -2434,7 +2441,7 @@ def f_export_percentiles(d_start_dates, d_end_dates, percentiles_to_find, wbs, I
     df_cause_wdt.index = range(0,len(df_cause_wdt))
     for year in d_start_dates.keys():
         for ind, row in df_cause_wdt.iterrows():
-            if row['Weather Boolean Key'] > -1:
+            if type(row['Weather Boolean Key']) == str or row['Weather Boolean Key'] > -1:
                 act_start_ind = d_start_ts[year][ind]
                 act_end_ind = d_end_ts[year][ind]
                 # loop through the different limits and count the number of exceedances between the start and end of the activity. 
@@ -2975,7 +2982,7 @@ def f_plot_mean_WDT_by_activity(wbs, d_end_ts, d_start_ts, timestep, split_dict,
     
     return plot_ID
  
-def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_names, wbs, df_summary, start_date):
+def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_names, wbs, df_summary, start_date, all_start_dates, all_end_dates):
     """Create two dataframes:
     1. df_summary - contains the start date and campaign duration percentiles
     2. df_p_end_dates - contains the activities, their locations and end date (P10 - P90)
@@ -2987,10 +2994,13 @@ def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_
     
     df_p_end_dates = pd.DataFrame(data=np.transpose(p_end_dates), 
                                   columns=summary_column_names)
+    df_p_start_dates = pd.DataFrame(data=np.transpose(p_start_dates), 
+                                  columns=summary_column_names) 
 
     df_p_end_dates["Location"] = wbs["Location"]
     df_p_end_dates["Activity"] = wbs["Activity"]
-    
+    df_p_start_dates["Location"] = wbs["Location"]
+    df_p_start_dates["Activity"] = wbs["Activity"]    
     
     summary_stats = (p_end_dates[:,len(p_end_dates[0])-1] 
                      -  p_start_dates[:,0]).astype('timedelta64[h]').astype('float')/24
@@ -2999,7 +3009,10 @@ def f_create_sensitivity_percentiles(d_start_dates, d_end_dates, summary_column_
     for i in range(0,len(percentiles_to_find)):
         df_summary[summary_column_names[i]].loc[str(start_date)] = summary_stats[i]
 
-    return df_summary, df_p_end_dates
+    all_start_dates.append(df_p_start_dates)
+    all_end_dates.append(df_p_end_dates)
+
+    return df_summary, df_p_end_dates, all_start_dates, all_end_dates
 
 def f_plot_start_date_sensitivty_plume(df_summary, split_dict, options, wbs):
 
@@ -3237,6 +3250,8 @@ if __name__ == '__main__':
         print("Aventis complete in", toc - tic2, "seconds")
 
         if options["Simulation Type (Set Start/ Set End/ Date Range)"] == "Date Range":
+            all_start_dates = list()
+            all_end_dates = list()
             tic = time.time()
             input_date = options["Input Date"]
             input_date2 = options["Input Date 2 (Only needed for Date Range)"]
@@ -3285,12 +3300,14 @@ if __name__ == '__main__':
                 cause_wdt_dict) = simulate_all_years(weather, wbs, window_bool_dict, options, bool_dict, linked_activity_dates, linked_activity_locations, sequence, cause_wdt_dict)
 
                 if options["Export Stats"] == "Yes":
-                    df_summary, df_p_end_dates = f_create_sensitivity_percentiles(d_start_dates, 
+                    df_summary, df_p_end_dates, all_end_dates, all_start_dates = f_create_sensitivity_percentiles(d_start_dates, 
                                                                                     d_end_dates, 
                                                                                     summary_column_names, 
                                                                                     wbs, 
                                                                                     df_summary,
-                                                                                    start_date)
+                                                                                    start_date, 
+                                                                                    all_start_dates,
+                                                                                    all_end_dates)
                     end_percentiles_dict[str(start_date)] = df_p_end_dates
                     if start_date == start_dates[-1]:
                         df_info =  create_df_info(options)
@@ -3324,6 +3341,8 @@ if __name__ == '__main__':
                 out_d = {}
                 out_d["DF Summary"] = df_summary
                 out_d["WBS"] = wbs
+                out_d["all start dates"] = all_start_dates
+                out_d["all end dates"] = all_end_dates
                 out_id = "".join([os.path.dirname(split_dict["Filepath"]),
                                   "/Aventis Out ",
                                   options["ID"], 
